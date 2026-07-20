@@ -2,13 +2,12 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
- 
-  --color-darkest: #0A0F1A;
-  --color-dark: #0F2433;
-  --color-mid-dark: #4F6B81;
-  --color-mid: #9DB1C1;
-  --color-light: #C7D4DF;
-  --color-lightest: #DDE5EC;
+  --color-darkest: #0a0f1a;
+  --color-dark: #0f2433;
+  --color-mid-dark: #4f6b81;
+  --color-mid: #9db1c1;
+  --color-light: #c7d4df;
+  --color-lightest: #dde5ec;
 
   --color-bg: var(--color-lightest);
   --color-bg-secondary: var(--color-light);
@@ -18,21 +17,10 @@
   --color-primary-hover: var(--color-dark);
 }
 
-/*
-button {
-  background: var(--color-primary);
-  color: #fff;
-  border: none;
-  padding: 0.5rem 1rem;
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-button:hover {
-  background: var(--color-primary-hover);
-} */
-
 .button-gray-rounded {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
   background: var(--color-primary);
   color: #fff;
   border: none;
@@ -43,6 +31,61 @@ button:hover {
 
 .button-gray-rounded:hover {
   background: var(--color-primary-hover);
+}
+
+.section-block {
+  max-width: 64rem;
+  margin: 0 auto;
+  padding: 1rem 1rem;
+}
+
+.section-block__title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: 1rem;
+}
+
+.section-block__text {
+  color: var(--color-darkest);
+  font-size: 1.125rem;
+  line-height: 1.8;
+  margin: 0;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  color: var(--color-darkest);
+  font-weight: 700;
+  line-height: 1.2;
+  
+}
+
+h1 {
+  font-size: 2.25rem;
+  margin: 0 0 0.5rem;
+}
+
+h2 {
+  font-size: 1.875rem;
+  margin: 0 0 1rem;
+}
+
+h3 {
+  font-size: 1.5rem;
+  margin: 0 0 0.5rem;
+}
+h4 {
+  font-size: 1.15rem;
+  margin: 0 0 0.5rem;
+}
+p {
+  line-height: 1.5;
+  margin: 0 0 1rem;
 }
 
 @theme inline {
@@ -62,4 +105,3 @@ button:hover {
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
-
