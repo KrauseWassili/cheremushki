@@ -1,20 +1,29 @@
-export default function HomePage() {
+import Buttons from "@/components/buttons-home-page";
+import Image from "next/image";
+export default function Home() {
   return (
-    <main style={{
-      minHeight: '100vh',
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center',
-      fontFamily: 'system-ui, sans-serif',
-      padding: '2rem',
-      backgroundColor: '#f8fafc',
-    }}>
-      <div style={{ maxWidth: 720, textAlign: 'center' }}>
-        <h1 style={{ marginBottom: '1rem', fontSize: '2.5rem' }}>Привет, Next.js!</h1>
-        <p style={{ fontSize: '1.125rem', lineHeight: 1.75 }}>
-          Это базовый проект Next.js. Запусти <code>npm install</code>, затем <code>npm run dev</code>.
-        </p>
+    <div className="text-foreground font-sans flex items-center justify-center px-4 min-h-[90vh]">
+      <div className="w-full max-w-5xl flex flex-col-reverse md:flex-row items-center md:items-center justify-between gap-10">
+        <div className="flex flex-col items-center md:items-start text-center md:text-left gap-6">
+          <h2 className="text-4xl md:text-5xl font-semibold">
+            Клуб Черемушки
+          </h2>
+          <p className="text-lg md:text-xl text-darkest">
+            Профессиональное сообщество Севера Германии
+          </p>
+          <Buttons />
+        </div>
+
+        <div className="flex justify-center md:justify-end w-full md:w-auto">
+          <Image
+            src="/hero_banner.png"
+            alt=""
+            width={300}
+            height={300}
+            className="w-64 h-auto rounded-xl shadow-lg"
+          />
+        </div>
       </div>
-    </main>
+    </div>
   );
 }

@@ -1,10 +1,65 @@
-html,
-body {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+ 
+  --color-darkest: #0A0F1A;
+  --color-dark: #0F2433;
+  --color-mid-dark: #4F6B81;
+  --color-mid: #9DB1C1;
+  --color-light: #C7D4DF;
+  --color-lightest: #DDE5EC;
+
+  --color-bg: var(--color-lightest);
+  --color-bg-secondary: var(--color-light);
+  --color-text: var(--color-darkest);
+  --color-text-secondary: var(--color-mid-dark);
+  --color-primary: var(--color-mid-dark);
+  --color-primary-hover: var(--color-dark);
 }
 
-* {
-  box-sizing: inherit;
+/*
+button {
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
 }
+
+button:hover {
+  background: var(--color-primary-hover);
+} */
+
+.button-gray-rounded {
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.button-gray-rounded:hover {
+  background: var(--color-primary-hover);
+}
+
+@theme inline {
+  --color-darkest: var(--color-darkest);
+  --color-dark: var(--color-dark);
+  --color-mid-dark: var(--color-mid-dark);
+  --color-mid: var(--color-mid);
+  --color-light: var(--color-light);
+  --color-lightest: var(--color-lightest);
+  --color-bg: var(--color-bg);
+  --color-bg-secondary: var(--color-bg-secondary);
+  --color-text: var(--color-text);
+  --color-text-secondary: var(--color-text-secondary);
+  --color-primary: var(--color-primary);
+  --color-primary-hover: var(--color-primary-hover);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
