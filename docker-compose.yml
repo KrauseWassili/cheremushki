@@ -1,0 +1,22 @@
+volumes:
+  postgres-db:
+
+services:
+  db:
+    image: postgres:17-alpine
+    volumes:
+      - postgres-db:/var/lib/postgresql/data/
+    environment:
+      POSTGRES_USER: ${DATABASE_USER}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+      POSTGRES_DB: ${DATABASE_NAME}
+    ports:
+      - "5432:5432"
+    restart: always
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    env_file:
+      - .env

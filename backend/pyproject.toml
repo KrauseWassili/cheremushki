@@ -1,7 +1,29 @@
 [project]
 name = "backend"
 version = "0.1.0"
-description = "Add your description here"
+description = "API"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "adrf>=0.1.13",
+    "black>=26.5.1",
+    "celery>=5.6.2",
+    "daphne>=4.2.2",
+    "django>=6.0.2",
+    "django-cors-headers>=4.9.0",
+    "django-csp>=4.0",
+    "django-environ>=0.12.0",
+    "django-extensions>=4.1",
+    "django-filter>=25.2",
+    "django-unfold>=0.78.1",
+    "djangorestframework>=3.16.1",
+    "djangorestframework-simplejwt>=5.5.1",
+    "drf-nested-routers>=0.95.0",
+    "drf-spectacular>=0.29.0",
+    "flower>=2.0.1",
+    "gunicorn>=25.0.1",
+    "markdown>=3.10.1",
+    "pillow>=12.1.0",
+    "psycopg2-binary>=2.9.11",
+    "requests>=2.34.2",
+]
