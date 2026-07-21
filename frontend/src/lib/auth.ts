@@ -60,7 +60,7 @@ export async function login(
     email: string,
     password: string
 ): Promise<TokenPair> {
-    return apiFetch<TokenPair>("/api/v1/token/", {
+    return apiFetch<TokenPair>("/api/v1/login/", {
         method: "POST",
         body: JSON.stringify({email, password}),
     });
@@ -73,7 +73,7 @@ export async function register(
     password: string,
     passwordConfirm: string
 ): Promise<TokenPair> {
-    return apiFetch<TokenPair>("/api/v1/sign-up/", {
+    return apiFetch<TokenPair>("/api/v1/accounts/sign-up/", {
         method: "POST",
         body: JSON.stringify({
             email,
@@ -92,7 +92,7 @@ export async function refreshAccessToken(): Promise<string | null> {
 
     try {
         const data = await apiFetch<{ access: string; refresh?: string }>(
-            "/api/v1/token/refresh/",
+            "/api/v1/login/refresh/",
             {
                 method: "POST",
                 body: JSON.stringify({refresh}),
@@ -120,10 +120,10 @@ export async function fetchCurrentUser(
     }
 
     try {
-        return await apiFetch<User>("/api/v1/user/me/", {method: "GET"}, token);
+        return await apiFetch<User>("/api/v1/accounts/user/me/", {method: "GET"}, token);
     } catch (error) {
         const refreshed = await refreshAccessToken();
         if (!refreshed) throw error;
-        return apiFetch<User>("/api/v1/user/me/", {method: "GET"}, refreshed);
+        return apiFetch<User>("/api/v1/accounts/user/me/", {method: "GET"}, refreshed);
     }
 }
