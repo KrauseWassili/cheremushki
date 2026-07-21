@@ -1,5 +1,4 @@
-volumes:
-  postgres-db:
+name: Cheremushki
 
 services:
   db:
@@ -20,3 +19,28 @@ services:
       retries: 5
     env_file:
       - .env
+
+  backend:
+    depends_on:
+      db:
+        condition: service_healthy
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    volumes:
+      - media:/src/media
+      - staticfiles:/src/staticfiles
+    expose:
+      - "8000"
+    # Remove for production deployment, only for local development
+    ports:
+      - "8000:8000"
+    container_name: backend
+    env_file: .env
+    command: bash ./scripts/run_backend_local.sh
+    restart: unless-stopped
+
+volumes:
+  postgres-db:
+  media:
+  staticfiles:

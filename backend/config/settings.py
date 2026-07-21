@@ -173,16 +173,16 @@ AUTH_PASSWORD_VALIDATORS = [
         "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
     },
     {
-        "NAME": "apps.accounts.services.password_validator.EntirelyAlphabeticPasswordValidator",
+        "NAME": "apps.accounts.services.user_service.password_validator.EntirelyAlphabeticPasswordValidator",
     },
     {
-        "NAME": "apps.accounts.services.password_validator.EntirelyNonCapitalLetterPasswordValidator",
+        "NAME": "apps.accounts.services.user_service.password_validator.EntirelyNonCapitalLetterPasswordValidator",
     },
     {
-        "NAME": "apps.accounts.services.password_validator.NoSmallLetterPasswordValidator",
+        "NAME": "apps.accounts.services.user_service.password_validator.NoSmallLetterPasswordValidator",
     },
     {
-        "NAME": "apps.accounts.services.password_validator.EntirelyNoneSpecialCharactersPasswordValidator",
+        "NAME": "apps.accounts.services.user_service.password_validator.EntirelyNoneSpecialCharactersPasswordValidator",
     },
 ]
 
