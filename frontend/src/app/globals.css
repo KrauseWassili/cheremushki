@@ -33,6 +33,18 @@
   background: var(--color-primary-hover);
 }
 
+.button-logout {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  /*background: var(--color-primary);
+  color: #fff;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 6px; */
+  cursor: pointer;
+}
+
 .section-block {
   max-width: 64rem;
   margin: 0 auto;

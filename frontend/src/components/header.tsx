@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useApp } from "@/providers/AppProvider";
+import { LogOut } from "lucide-react";
 
 export default function Header() {
-  const { user, isLoggedIn } = useApp();
+  const { user, isLoggedIn, logout } = useApp();
 
   return (
     <header
@@ -29,16 +30,10 @@ export default function Header() {
               Главная
             </Link>
             <Link
-              href="/about"
+              href="/project"
               className="text-secondary text-xl hover:text-foreground transition-colors font-medium"
             >
-              О клубе
-            </Link>
-            <Link
-              href="/rules"
-              className="text-secondary text-xl hover:text-foreground transition-colors font-medium"
-            >
-              Правила
+              О проекте
             </Link>
             <Link
               href="/members"
@@ -48,20 +43,42 @@ export default function Header() {
             </Link>
           </div>
 
-          {isLoggedIn ? (<Link
-              href="/profile"
-              className="text-secondary text-xl hover:text-foreground transition-colors font-medium"
-            >
-              Личный кабинет
-            </Link>
-          ):(
-            <Link
-              href="/profile"
-              className="invisible text-secondary text-xl hover:text-foreground transition-colors font-medium"
-            >
-              Личный кабинет
-            </Link>
-          )}
+          <div className="flex items-center space-x-8">
+            {isLoggedIn ? (
+              <Link
+                href="/profile"
+                className="text-secondary text-xl hover:text-foreground transition-colors font-medium"
+              >
+                Личный кабинет
+              </Link>
+            ) : (
+              <Link
+                href="/profile"
+                className="invisible text-secondary text-xl hover:text-foreground transition-colors font-medium"
+              >
+                Личный кабинет
+              </Link>
+            )}
+            {isLoggedIn ? (
+              <button
+                type="button"
+                onClick={() => logout()}
+                className="button-logout"
+              >
+                Выйти
+                <LogOut />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => logout()}
+                className="invisible button-logout"
+              >
+                Выйти
+                <LogOut />
+              </button>
+            )}
+          </div>
         </div>
       </nav>
     </header>

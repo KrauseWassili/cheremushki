@@ -1,7 +1,6 @@
 "use client";
 
 import { useApp } from "@/providers/AppProvider";
-import { LogIn } from "lucide-react";
 import Link from "next/link";
 
 export default function ProfilePage() {

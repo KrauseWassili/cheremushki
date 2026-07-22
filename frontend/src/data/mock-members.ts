@@ -1,0 +1,96 @@
+import type { MemberProfile } from "@/types/member";
+
+export const currentUserId = "member-1";
+
+export const mockMembers: MemberProfile[] = [
+  {
+    id: "member-1",
+    slug: "anna-volkova",
+    fullName: "Анна Волкова",
+    avatarUrl: "https://i.pravatar.cc/400?img=47",
+    headline: "Product Designer в финтехе",
+    city: "Бремен",
+    company: "NordPay GmbH",
+    position: "Senior Product Designer",
+    bio: "Проектирую цифровые продукты и помогаю командам разбираться со сложными пользовательскими сценариями. В Германии живу четыре года. Люблю небольшие профессиональные встречи, прогулки и хороший кофе.",
+    canHelpWith:
+      "Могу посмотреть портфолио дизайнера, помочь подготовиться к собеседованию и рассказать о работе в немецкой продуктовой команде.",
+    lookingFor:
+      "Ищу людей для небольших дизайн-митапов и совместных поездок по северу Германии.",
+    tags: ["Product Design", "UX", "FinTech", "Карьера"],
+    languages: ["Русский", "Немецкий", "Английский"],
+    telegramUsername: "anna_volkova",
+    linkedinUrl: "https://www.linkedin.com/",
+    websiteUrl: "https://example.com",
+    contactPreference: "telegram",
+    achievements: ["Ранний участник", "Организатор встречи"],
+    joinedAt: "2026-04-12",
+    isOpenToContacts: true,
+  },
+  {
+    id: "member-2",
+    slug: "maksim-orlov",
+    fullName: "Максим Орлов",
+    avatarUrl: "https://i.pravatar.cc/400?img=12",
+    headline: "Backend-разработчик, Python и распределённые системы",
+    city: "Ольденбург",
+    company: "Logistics Cloud",
+    position: "Backend Engineer",
+    bio: "Разрабатываю серверные приложения на Python. До переезда занимался финтехом, сейчас работаю с логистическими системами. Интересуюсь архитектурой, PostgreSQL и самостоятельными проектами.",
+    canHelpWith:
+      "Могу провести пробное техническое интервью, посмотреть архитектуру pet-проекта или помочь разобраться с Python.",
+    lookingFor:
+      "Хочу познакомиться с людьми, которые запускают собственные продукты или работают над open-source проектами.",
+    tags: ["Python", "PostgreSQL", "Backend", "Open Source"],
+    languages: ["Русский", "Немецкий", "Английский"],
+    telegramUsername: "max_orlov",
+    linkedinUrl: "https://www.linkedin.com/",
+    contactPreference: "telegram",
+    achievements: ["Помогает участникам"],
+    joinedAt: "2026-05-03",
+    isOpenToContacts: true,
+  },
+  {
+    id: "member-3",
+    slug: "elena-berg",
+    fullName: "Елена Берг",
+    avatarUrl: "https://i.pravatar.cc/400?img=32",
+    headline: "HR-консультант и карьерный наставник",
+    city: "Бремен",
+    company: "Freelance",
+    position: "Career Consultant",
+    bio: "Работаю с русскоязычными специалистами, которые выходят на немецкий рынок труда. Помогаю структурировать опыт и лучше понимать местный процесс найма.",
+    canHelpWith:
+      "Могу дать обратную связь по CV, LinkedIn и сопроводительному письму. Иногда провожу пробные интервью.",
+    lookingFor:
+      "Ищу экспертов из разных отраслей для обмена информацией о найме и профессиональных требованиях.",
+    tags: ["HR", "Поиск работы", "CV", "LinkedIn"],
+    languages: ["Русский", "Немецкий", "Английский"],
+    linkedinUrl: "https://www.linkedin.com/",
+    contactPreference: "linkedin",
+    achievements: ["Наставник"],
+    joinedAt: "2026-03-18",
+    isOpenToContacts: true,
+  },
+  {
+    id: "member-4",
+    slug: "pavel-mironov",
+    fullName: "Павел Миронов",
+    avatarUrl: "https://i.pravatar.cc/400?img=11",
+    headline: "Инженер-механик в сфере ветроэнергетики",
+    city: "Бремерхафен",
+    company: "Wind Systems GmbH",
+    position: "Mechanical Engineer",
+    bio: "Работаю с ветроэнергетическими установками и промышленным проектированием. В свободное время занимаюсь фотографией и велосипедными поездками.",
+    canHelpWith:
+      "Могу рассказать о немецкой инженерной среде, признании квалификации и поиске первой работы вне IT.",
+    lookingFor:
+      "Буду рад познакомиться с инженерами и людьми, интересующимися фотографией.",
+    tags: ["Engineering", "Энергетика", "Фотография"],
+    languages: ["Русский", "Немецкий"],
+    contactPreference: "club_intro",
+    achievements: [],
+    joinedAt: "2026-06-01",
+    isOpenToContacts: false,
+  },
+];
