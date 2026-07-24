@@ -4,7 +4,7 @@ from asgiref.sync import sync_to_async
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from rest_framework_simplejwt.tokens import RefreshToken
+from apps.bot.tasks.email import send_telegram_invite_email
 
 from .serializers import RegisterSerializer, UserSerializer
 
@@ -18,14 +18,16 @@ class RegisterViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
         await sync_to_async(serializer.is_valid)(raise_exception=True)
         user = await serializer.asave()
 
-        token = await sync_to_async(RefreshToken.for_user)(user)
-        user_data = await get_data(UserSerializer(user))
+        await sync_to_async(send_telegram_invite_email.delay)(user.pk)
 
+        user_data = await get_data(UserSerializer(user))
         return Response(
             {
                 "user": user_data,
-                "access": str(token.access_token),
-                "refresh": str(token),
+                "detail": (
+                    "Registrierung erfolgreich. Bitte prüfe dein Postfach "
+                    "und tritt der Telegram-Gruppe bei, um dein Konto zu aktivieren."
+                ),
             },
             status=status.HTTP_201_CREATED,
         )

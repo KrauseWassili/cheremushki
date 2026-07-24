@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import List, Tuple
 
 import environ
+from celery.schedules import crontab
 from corsheaders.defaults import default_methods
 from django.templatetags.static import static
 
@@ -37,7 +38,7 @@ THIRD_PARTY_APPS: Tuple[str, ...] = (
     "drf_spectacular",
 )
 
-LOCAL_APPS: Tuple[str, ...] = ("apps.accounts",)
+LOCAL_APPS: Tuple[str, ...] = ("apps.accounts", "apps.bot")
 INSTALLED_APPS = THIRD_PARTY_APPS + DJANGO_APPS + LOCAL_APPS
 
 AUTH_USER_MODEL = "accounts.CustomUser"
@@ -147,7 +148,12 @@ UNFOLD = {
         },
     },
 }
+# --- Telegram Bot -------------------------------------------------- #
+TELEGRAM_BOT_TOKEN = env.str("TELEGRAM_BOT_TOKEN", default="")
+TELEGRAM_CHAT_ID = env.str("TELEGRAM_CHAT_ID", default="")
+TELEGRAM_WEBHOOK_SECRET = env("TELEGRAM_WEBHOOK_SECRET")
 
+# --- Cors ----------------------------------------------------------- #
 CORS_ALLOW_CREDENTIALS = True
 CORS_URLS_REGEX = "/api/.*"
 
@@ -160,6 +166,34 @@ CORS_ALLOWED_ORIGINS: List[str] = env.list(
         "http://127.0.0.1:3000",
     ],
 )
+
+# ------ Celery / Redis settings ------------------------------------------------------ #
+REDIS_URL = env.str("REDIS_URL", default="")
+
+CELERY_TIMEZONE = "Europe/Berlin"
+CELERY_BROKER_URL = env("DJANGO_CELERY_BROKER_URL")
+CELERY_RESULT_BACKEND = env("DJANGO_CELERY_RESULT_BACKEND")
+CELERY_TASK_ALWAYS_EAGER = env.bool("DJANGO_CELERY_TASK_ALWAYS_EAGER", default=False)
+
+CELERY_CACHE_BACKEND = "default"
+CELERY_TASK_CREATE_MISSING_QUEUES = True
+CELERY_RETRY_DELAY = 15
+CELERY_RETRY_MAX_TIMES = 15  # 15 retries
+
+# Leichte Tasks laufen auf der "default"-Queue, rechenintensive auf "generation".
+CELERY_TASK_DEFAULT_QUEUE = "default"
+CELERY_TASK_ROUTES = {
+    "apps.bot.tasks.email.*": {"queue": "default"},
+    "apps.bot.tasks.telegram_user.*": {"queue": "default"},
+    "apps.*.tasks.generation.*": {"queue": "generation"},
+}
+
+CELERY_BEAT_SCHEDULE = {
+    "poll-telegram-updates": {
+        "task": "apps.bot.tasks.telegram_user.poll_telegram_updates_task",
+        "schedule": 10.0,  # alle 10 Sekunden
+    }
+}
 
 AUTH_PASSWORD_VALIDATORS = [
     {
@@ -262,3 +296,11 @@ SIMPLE_JWT = {
 }
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="noreply@cheremushki.de")
+if DEBUG:
+    EMAIL_HOST = env("EMAIL_HOST", default="mailcatcher")
+    EMAIL_HOST_USER = ""
+    EMAIL_HOST_PASSWORD = ""
+    EMAIL_PORT = env.int("EMAIL_PORT", default=1025)
+    EMAIL_USE_TLS = False

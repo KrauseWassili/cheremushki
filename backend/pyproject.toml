@@ -25,5 +25,6 @@ dependencies = [
     "markdown>=3.10.1",
     "pillow>=12.1.0",
     "psycopg2-binary>=2.9.11",
+    "redis>=5.0.0",
     "requests>=2.34.2",
 ]
