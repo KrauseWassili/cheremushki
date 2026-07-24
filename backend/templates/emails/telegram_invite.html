@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Deine Telegram-Einladung</title>
+</head>
+<body style="margin:0; padding:0; background-color:#f4f4f7; font-family:Arial, Helvetica, sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f7; padding:32px 0;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff; border-radius:8px; overflow:hidden; max-width:600px; width:100%;">
+
+          <!-- Header -->
+          <tr>
+            <td style="background-color:#1c1c1e; padding:24px 32px;">
+              <span style="color:#ffffff; font-size:20px; font-weight:bold;">Willkommen an Bord</span>
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:32px;">
+              <p style="margin:0 0 16px; font-size:16px; line-height:1.5; color:#1c1c1e;">
+                Hallo {{ user.first_name }},
+              </p>
+              <p style="margin:0 0 16px; font-size:16px; line-height:1.5; color:#1c1c1e;">
+                vielen Dank für deine Registrierung. Um dein Konto zu aktivieren,
+                tritt bitte unserer Telegram-Gruppe über den folgenden Button bei.
+                Sobald du der Gruppe beigetreten bist, wird dein Zugang automatisch freigeschaltet.
+              </p>
+
+              <table role="presentation" cellpadding="0" cellspacing="0" style="margin:24px 0;">
+                <tr>
+                  <td align="center" style="border-radius:6px; background-color:#2AABEE;">
+                    <a href="{{ invite_link }}"
+                       target="_blank"
+                       style="display:inline-block; padding:14px 28px; font-size:16px; font-weight:bold; color:#ffffff; text-decoration:none; border-radius:6px;">
+                      Telegram-Gruppe beitreten
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin:0 0 16px; font-size:14px; line-height:1.5; color:#6b6b70;">
+                Falls der Button nicht funktioniert, kopiere diesen Link in deinen Browser:<br>
+                <a href="{{ invite_link }}" style="color:#2AABEE; word-break:break-all;">{{ invite_link }}</a>
+              </p>
+
+              <p style="margin:0; font-size:14px; line-height:1.5; color:#6b6b70;">
+                Hinweis: Dieser Einladungslink ist nur für dich bestimmt und kann nur einmal
+                verwendet werden.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding:24px 32px; background-color:#f4f4f7; border-top:1px solid #e5e5ea;">
+              <p style="margin:0; font-size:12px; line-height:1.5; color:#9a9a9e;">
+                Diese E-Mail wurde automatisch versendet, da du dich mit dieser Adresse
+                registriert hast. Solltest du dich nicht registriert haben, kannst du diese
+                E-Mail ignorieren.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
