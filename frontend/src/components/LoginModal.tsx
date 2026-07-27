@@ -1,10 +1,11 @@
 "use client";
 
-import {FormEvent, useState} from "react";
+import {FormEvent, useEffect, useState} from "react";
 import {Loader2, Sun, X} from "lucide-react";
 import {ApiError, type ApiFieldErrors} from "@/lib/api";
 
 interface LoginModalProps {
+    initialMode?: "login" | "register";
     onClose: () => void;
     onLogin: (
         email: string,
@@ -26,7 +27,7 @@ const emptyRegisterErrors = {
     fields: {} as ApiFieldErrors,
 };
 
-export function LoginModal({onClose, onLogin, onRegister}: LoginModalProps) {
+export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}: LoginModalProps) {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [rememberMe, setRememberMe] = useState(true);
@@ -41,7 +42,11 @@ export function LoginModal({onClose, onLogin, onRegister}: LoginModalProps) {
     const [regPassword, setRegPassword] = useState("");
     const [regPasswordConfirm, setRegPasswordConfirm] = useState("");
 
-    const [mode, setMode] = useState<"login" | "register">("login");
+    const [mode, setMode] = useState<"login" | "register">(initialMode);
+
+    useEffect(() => {
+        setMode(initialMode);
+    }, [initialMode]);
 
     const switchMode = (nextMode: "login" | "register") => {
         setMode(nextMode);

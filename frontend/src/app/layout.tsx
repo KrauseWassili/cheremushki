@@ -3,6 +3,10 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import Header from "@/components/header";
 import Footer from "@/components/footer";
+import {
+  APP_SCROLL_CONTAINER_ID,
+  ScrollToTop,
+} from "@/components/scroll-to-top";
 import { Providers } from "./providers/providers";
 
 const geistSans = Geist({
@@ -54,7 +58,11 @@ export default function RootLayout({
       >
         <Providers>
           <Header />
-          <main className="flex-1 min-h-0 overflow-auto pt-20 pb-20">
+          <ScrollToTop />
+          <main
+            id={APP_SCROLL_CONTAINER_ID}
+            className="flex-1 min-h-0 overflow-auto pt-14 pb-16 sm:pt-16 sm:pb-20"
+          >
             <div className="mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-8">
               {children}
             </div>
