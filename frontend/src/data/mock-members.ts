@@ -1,6 +1,7 @@
 import type { MemberProfile } from "@/types/member";
 
 export const currentUserId = "member-1";
+export const telegramGroupUrl = "https://t.me/+demo-invite-link";
 
 export const mockMembers: MemberProfile[] = [
   {
@@ -10,6 +11,7 @@ export const mockMembers: MemberProfile[] = [
     avatarUrl: "https://i.pravatar.cc/400?img=47",
     headline: "Product Designer в финтехе",
     city: "Бремен",
+    profession: "Product Design",
     company: "NordPay GmbH",
     position: "Senior Product Designer",
     bio: "Проектирую цифровые продукты и помогаю командам разбираться со сложными пользовательскими сценариями. В Германии живу четыре года. Люблю небольшие профессиональные встречи, прогулки и хороший кофе.",
@@ -19,13 +21,14 @@ export const mockMembers: MemberProfile[] = [
       "Ищу людей для небольших дизайн-митапов и совместных поездок по северу Германии.",
     tags: ["Product Design", "UX", "FinTech", "Карьера"],
     languages: ["Русский", "Немецкий", "Английский"],
+    email: "anna.volkova@example.de",
     telegramUsername: "anna_volkova",
     linkedinUrl: "https://www.linkedin.com/",
     websiteUrl: "https://example.com",
-    contactPreference: "telegram",
+    contactMode: "direct",
+    telegramGroupUrl,
     achievements: ["Ранний участник", "Организатор встречи"],
     joinedAt: "2026-04-12",
-    isOpenToContacts: true,
   },
   {
     id: "member-2",
@@ -34,6 +37,7 @@ export const mockMembers: MemberProfile[] = [
     avatarUrl: "https://i.pravatar.cc/400?img=12",
     headline: "Backend-разработчик, Python и распределённые системы",
     city: "Ольденбург",
+    profession: "Backend-разработка",
     company: "Logistics Cloud",
     position: "Backend Engineer",
     bio: "Разрабатываю серверные приложения на Python. До переезда занимался финтехом, сейчас работаю с логистическими системами. Интересуюсь архитектурой, PostgreSQL и самостоятельными проектами.",
@@ -43,12 +47,13 @@ export const mockMembers: MemberProfile[] = [
       "Хочу познакомиться с людьми, которые запускают собственные продукты или работают над open-source проектами.",
     tags: ["Python", "PostgreSQL", "Backend", "Open Source"],
     languages: ["Русский", "Немецкий", "Английский"],
+    email: "max.orlov@example.de",
     telegramUsername: "max_orlov",
     linkedinUrl: "https://www.linkedin.com/",
-    contactPreference: "telegram",
+    contactMode: "request",
+    telegramGroupUrl,
     achievements: ["Помогает участникам"],
     joinedAt: "2026-05-03",
-    isOpenToContacts: true,
   },
   {
     id: "member-3",
@@ -57,6 +62,7 @@ export const mockMembers: MemberProfile[] = [
     avatarUrl: "https://i.pravatar.cc/400?img=32",
     headline: "HR-консультант и карьерный наставник",
     city: "Бремен",
+    profession: "HR и карьера",
     company: "Freelance",
     position: "Career Consultant",
     bio: "Работаю с русскоязычными специалистами, которые выходят на немецкий рынок труда. Помогаю структурировать опыт и лучше понимать местный процесс найма.",
@@ -66,11 +72,12 @@ export const mockMembers: MemberProfile[] = [
       "Ищу экспертов из разных отраслей для обмена информацией о найме и профессиональных требованиях.",
     tags: ["HR", "Поиск работы", "CV", "LinkedIn"],
     languages: ["Русский", "Немецкий", "Английский"],
+    email: "elena.berg@example.de",
     linkedinUrl: "https://www.linkedin.com/",
-    contactPreference: "linkedin",
+    contactMode: "group",
+    telegramGroupUrl,
     achievements: ["Наставник"],
     joinedAt: "2026-03-18",
-    isOpenToContacts: true,
   },
   {
     id: "member-4",
@@ -79,6 +86,7 @@ export const mockMembers: MemberProfile[] = [
     avatarUrl: "https://i.pravatar.cc/400?img=11",
     headline: "Инженер-механик в сфере ветроэнергетики",
     city: "Бремерхафен",
+    profession: "Инженерия",
     company: "Wind Systems GmbH",
     position: "Mechanical Engineer",
     bio: "Работаю с ветроэнергетическими установками и промышленным проектированием. В свободное время занимаюсь фотографией и велосипедными поездками.",
@@ -88,9 +96,9 @@ export const mockMembers: MemberProfile[] = [
       "Буду рад познакомиться с инженерами и людьми, интересующимися фотографией.",
     tags: ["Engineering", "Энергетика", "Фотография"],
     languages: ["Русский", "Немецкий"],
-    contactPreference: "club_intro",
+    contactMode: "closed",
+    telegramGroupUrl,
     achievements: [],
     joinedAt: "2026-06-01",
-    isOpenToContacts: false,
   },
 ];

@@ -1,8 +1,4 @@
-export type ContactPreference =
-  | "telegram"
-  | "linkedin"
-  | "website"
-  | "club_intro";
+export type ContactMode = "direct" | "request" | "group" | "closed";
 
 export type MemberProfile = {
   id: string;
@@ -10,9 +6,15 @@ export type MemberProfile = {
 
   fullName: string;
   avatarUrl?: string;
+  avatarOriginalUrl?: string;
+  avatarPositionX?: number;
+  avatarPositionY?: number;
+  avatarScale?: number;
+  avatarCropSize?: number;
   headline: string;
 
   city: string;
+  profession?: string;
   company?: string;
   position?: string;
 
@@ -23,13 +25,14 @@ export type MemberProfile = {
   tags: string[];
   languages: string[];
 
+  email?: string;
   telegramUsername?: string;
   linkedinUrl?: string;
   websiteUrl?: string;
-  contactPreference: ContactPreference;
+  contactMode: ContactMode;
+  telegramGroupUrl?: string;
 
   achievements: string[];
 
   joinedAt: string;
-  isOpenToContacts: boolean;
 };

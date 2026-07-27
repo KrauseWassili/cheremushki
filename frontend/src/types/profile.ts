@@ -1,0 +1,25 @@
+export type ProfileDraft = {
+  firstName: string;
+  lastName: string;
+  slug: string;
+  email: string;
+  city: string;
+  profession: string;
+  headline: string;
+  bio: string;
+  canHelpWith: string;
+  lookingFor: string;
+  company: string;
+  position: string;
+  telegram: string;
+  linkedin: string;
+  website: string;
+  tags: string;
+  contactMode: "direct" | "request" | "group" | "closed";
+  avatarUrl?: string;
+  avatarOriginalUrl?: string;
+  avatarPositionX: number;
+  avatarPositionY: number;
+  avatarScale: number;
+  avatarCropSize: number;
+};

@@ -1,4 +1,9 @@
 import type { MemberProfile } from "@/types/member";
+import {
+  getContactModeLabel,
+  hasVisibleContactActions,
+} from "@/lib/member-contact";
+import { MemberContactActions } from "./member-contact-actions";
 
 type MemberProfileViewProps = {
   member: MemberProfile;
@@ -7,6 +12,24 @@ type MemberProfileViewProps = {
 export function MemberProfileView({
   member,
 }: MemberProfileViewProps) {
+  const professionalFacts = [
+    { label: "Город", value: member.city },
+    { label: "Профессия", value: member.profession },
+    { label: "Должность", value: member.position },
+    { label: "Компания", value: member.company },
+    {
+      label: "Языки",
+      value:
+        member.languages.length > 0 ? member.languages.join(", ") : undefined,
+    },
+    {
+      label: "В клубе с",
+      value: new Intl.DateTimeFormat("ru-RU", {
+        dateStyle: "long",
+      }).format(new Date(member.joinedAt)),
+    },
+  ].filter((fact) => fact.value);
+
   return (
     <div className="grid gap-6">
       <section className="rounded-3xl border border-border bg-background p-6 shadow-sm sm:p-8">
@@ -39,23 +62,23 @@ export function MemberProfileView({
                 </p>
               </div>
 
-              {member.isOpenToContacts && (
-                <span className="rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-bold text-emerald-800">
-                  Открыт к общению
-                </span>
-              )}
+              <span className="rounded-full bg-muted px-3 py-1.5 text-xs font-bold text-foreground">
+                {getContactModeLabel(member)}
+              </span>
             </div>
 
-            <div className="mt-5 flex flex-wrap gap-2">
-              {member.tags.map((tag) => (
-                <span
-                  key={tag}
-                  className="rounded-full border border-border bg-muted/50 px-3 py-1 text-sm"
-                >
-                  {tag}
-                </span>
-              ))}
-            </div>
+            {member.tags.length > 0 && (
+              <div className="mt-5 flex flex-wrap gap-2">
+                {member.tags.map((tag) => (
+                  <span
+                    key={tag}
+                    className="rounded-full border border-border bg-muted/50 px-3 py-1 text-sm"
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </section>
@@ -82,36 +105,18 @@ export function MemberProfileView({
       <section className="rounded-3xl border border-border bg-background p-6 sm:p-8">
         <h2 className="text-xl font-black">Профессиональное</h2>
 
-        <dl className="mt-5 grid gap-5 sm:grid-cols-2">
-          <div>
-            <dt className="text-sm text-muted-foreground">Должность</dt>
-            <dd className="mt-1 font-bold">
-              {member.position || "Не указана"}
-            </dd>
-          </div>
-
-          <div>
-            <dt className="text-sm text-muted-foreground">Компания</dt>
-            <dd className="mt-1 font-bold">
-              {member.company || "Не указана"}
-            </dd>
-          </div>
-
-          <div>
-            <dt className="text-sm text-muted-foreground">Языки</dt>
-            <dd className="mt-1 font-bold">
-              {member.languages.join(", ")}
-            </dd>
-          </div>
-
-          <div>
-            <dt className="text-sm text-muted-foreground">В клубе с</dt>
-            <dd className="mt-1 font-bold">
-              {new Intl.DateTimeFormat("ru-RU", {
-                dateStyle: "long",
-              }).format(new Date(member.joinedAt))}
-            </dd>
-          </div>
+        <dl className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {professionalFacts.map((fact) => (
+            <div
+              key={fact.label}
+              className="rounded-2xl border border-border bg-muted/30 px-4 py-3"
+            >
+              <dt className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                {fact.label}
+              </dt>
+              <dd className="mt-1 font-bold">{fact.value}</dd>
+            </div>
+          ))}
         </dl>
       </section>
 
@@ -132,50 +137,14 @@ export function MemberProfileView({
         </section>
       )}
 
-      <section className="rounded-3xl border border-border bg-background p-6 sm:p-8">
-        <h2 className="text-xl font-black">Связаться</h2>
-
-        {member.isOpenToContacts ? (
-          <div className="mt-5 flex flex-wrap gap-3">
-            {member.telegramUsername && (
-              <a
-                href={`https://t.me/${member.telegramUsername}`}
-                target="_blank"
-                rel="noreferrer"
-                className="rounded-xl bg-foreground px-4 py-2.5 text-sm font-bold text-background"
-              >
-                Telegram
-              </a>
-            )}
-
-            {member.linkedinUrl && (
-              <a
-                href={member.linkedinUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="rounded-xl border border-border px-4 py-2.5 text-sm font-bold hover:bg-muted"
-              >
-                LinkedIn
-              </a>
-            )}
-
-            {member.websiteUrl && (
-              <a
-                href={member.websiteUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="rounded-xl border border-border px-4 py-2.5 text-sm font-bold hover:bg-muted"
-              >
-                Сайт
-              </a>
-            )}
+      {hasVisibleContactActions(member) && (
+        <section className="rounded-3xl border border-border bg-background p-6 sm:p-8">
+          <h2 className="text-xl font-black">Связаться</h2>
+          <div className="mt-5">
+            <MemberContactActions member={member} />
           </div>
-        ) : (
-          <p className="mt-3 text-muted-foreground">
-            Участник предпочитает знакомиться через организатора клуба.
-          </p>
-        )}
-      </section>
+        </section>
+      )}
     </div>
   );
 }

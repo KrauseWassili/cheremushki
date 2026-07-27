@@ -127,3 +127,34 @@ export async function fetchCurrentUser(
         return apiFetch<User>("/api/v1/accounts/user/me/", {method: "GET"}, refreshed);
     }
 }
+
+export async function updateCurrentUser(
+    data: Pick<User, "email" | "first_name" | "last_name">
+): Promise<User> {
+    const token = getAccessToken();
+    if (!token) {
+        throw new Error("Nicht angemeldet");
+    }
+
+    try {
+        return await apiFetch<User>(
+            "/api/v1/accounts/user/me/",
+            {
+                method: "PATCH",
+                body: JSON.stringify(data),
+            },
+            token
+        );
+    } catch (error) {
+        const refreshed = await refreshAccessToken();
+        if (!refreshed) throw error;
+        return apiFetch<User>(
+            "/api/v1/accounts/user/me/",
+            {
+                method: "PATCH",
+                body: JSON.stringify(data),
+            },
+            refreshed
+        );
+    }
+}

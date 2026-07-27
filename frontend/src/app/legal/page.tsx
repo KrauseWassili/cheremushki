@@ -2,12 +2,12 @@
 
 export default function ContactPage() {
   return (
-    <div className="max-w-5xl min-h-screen flex flex-col items-start px-4 text-left">
-      <section className="section-block">
-        <h1 className="section-block__title font-black">Impressum</h1>
+    <main className="mx-auto w-full max-w-6xl px-4 py-4 sm:px-6 sm:py-6">
+      <header className="mx-auto mb-10 max-w-3xl text-center">
+        <h1 className="mt-3 text-4xl font-black tracking-tight sm:text-5xl">Правовая информация</h1>
 
         <p className="section-block__text">Angaben gemäß § 5 DDG</p>
-      </section>
+      </header>
 
       <section className="section-block">
         <h2 className="section-block__title font-black">Verantwortlich</h2>
@@ -35,6 +35,6 @@ export default function ContactPage() {
           </a>
         </p>
       </section>
-    </div>
+    </main>
   );
 }

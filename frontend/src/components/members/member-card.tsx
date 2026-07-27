@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { getContactModeLabel } from "@/lib/member-contact";
 import type { MemberProfile } from "@/types/member";
 
 type MemberCardProps = {
@@ -6,6 +7,13 @@ type MemberCardProps = {
 };
 
 export function MemberCard({ member }: MemberCardProps) {
+  const profileMeta = [
+    `📍 ${member.city}`,
+    member.profession,
+    member.position,
+    member.company,
+  ].filter(Boolean);
+
   return (
     <article className="rounded-3xl border border-border bg-background p-5 shadow-sm transition hover:border-foreground/20 hover:shadow-md sm:p-7">
       <div className="flex flex-col gap-5 sm:flex-row">
@@ -41,29 +49,34 @@ export function MemberCard({ member }: MemberCardProps) {
                 {member.headline}
               </p>
 
-              <p className="mt-2 text-sm text-muted-foreground">
-                📍 {member.city}
-                {member.company ? ` · ${member.company}` : ""}
-              </p>
+              {profileMeta.length > 0 && (
+                <p className="mt-2 text-sm text-muted-foreground">
+                  {profileMeta.join(" · ")}
+                </p>
+              )}
             </div>
 
-            {member.isOpenToContacts && (
-              <span className="h-fit w-fit rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800">
-                Открыт к общению
-              </span>
-            )}
+            <span className="h-fit w-fit rounded-full bg-muted px-3 py-1 text-xs font-bold text-foreground">
+              {getContactModeLabel(member)}
+            </span>
           </div>
 
-          <div className="mt-4 flex flex-wrap gap-2">
-            {member.tags.slice(0, 5).map((tag) => (
-              <span
-                key={tag}
-                className="rounded-full border border-border bg-muted/50 px-3 py-1 text-xs font-medium"
-              >
-                {tag}
-              </span>
-            ))}
-          </div>
+          <p className="mt-4 line-clamp-3 text-sm leading-6 text-muted-foreground">
+            {member.bio}
+          </p>
+
+          {member.tags.length > 0 && (
+            <div className="mt-4 flex flex-wrap gap-2">
+              {member.tags.slice(0, 5).map((tag) => (
+                <span
+                  key={tag}
+                  className="rounded-full border border-border bg-muted/50 px-3 py-1 text-xs font-medium"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
 
           <div className="mt-5 grid gap-4">
             <div>
@@ -86,12 +99,14 @@ export function MemberCard({ member }: MemberCardProps) {
           </div>
 
           <div className="mt-5">
-            <Link
-              href={`/members/${member.slug}`}
-              className="inline-flex rounded-xl border border-border px-4 py-2 text-sm font-bold transition hover:bg-muted"
-            >
-              Открыть профиль
-            </Link>
+            <div className="flex flex-wrap gap-3">
+              <Link
+                href={`/members/${member.slug}`}
+                className="inline-flex rounded-xl border border-border px-4 py-2 text-sm font-bold transition hover:bg-muted"
+              >
+                Открыть профиль
+              </Link>
+            </div>
           </div>
         </div>
       </div>

@@ -1,13 +1,10 @@
 "use client";
 
-import { LoginModal } from "@/components/LoginModal";
 import { useApp } from "@/providers/AppProvider";
-import { LogIn } from "lucide-react";
 import Image from "next/image";
-import Link from "next/link";
+
 export default function Home() {
-  const { openLogin, isLoggedIn, showLogin, closeLogin, login, signUp } =
-    useApp();
+  const { openLogin } = useApp();
 
   return (
     <>
@@ -16,27 +13,15 @@ export default function Home() {
           <div className="w-full">
             <div className="max-w-5xl w-full mx-auto flex flex-col-reverse md:flex-row items-center justify-between gap-10">
               <div className="flex flex-col items-center md:items-start text-center md:text-left gap-6 md:w-1/2">
-                <h2 className="text-4xl md:text-5xl font-semibold">
+                <h1 className="text-4xl md:text-5xl font-semibold">
                   Клуб Черемушки
-                </h2>
+                </h1>
                 <p className="text-lg md:text-xl text-darkest">
-                  Закрытое сообщество русскоязычных специалистов из Бремена и
-                  соседних городов.
+                  <em>
+                    Закрытое сообщество русскоязычных специалистов из Бремена и
+                    соседних городов.
+                  </em>
                 </p>
-                <button
-                  type="button"
-                  onClick={() => openLogin()}
-                  className="button-gray-rounded"
-                >
-                  Войти
-                  <LogIn />
-                </button>
-                <Link
-                  href="/join"
-                  className="inline-flex min-h-12 items-center justify-center rounded-xl bg-foreground px-6 font-bold text-background transition hover:opacity-85"
-                >
-                  Вступить в клуб
-                </Link>
               </div>
 
               <div className="flex justify-center md:justify-end w-full md:w-1/2">
@@ -52,21 +37,17 @@ export default function Home() {
           </div>
         </div>
       </section>
-      {showLogin && (
-        <LoginModal onClose={closeLogin} onLogin={login} onRegister={signUp} />
-      )}
-
       <section className="section-block text-foreground font-sans">
         <p className="section-block__text flex justify-center font-black">
-          Не знаешь, зачем всё это и с чего начать?
+          Не знаете, зачем всё это и с чего начать?
         </p>
 
         <p className="section-block__text text-center">
-          Пролистай ниже — мы коротко объясним, как устроен клуб и чем он может
-          быть полезен.
+          Пролистайте ниже — мы коротко объясним, как устроен клуб и чем он
+          может быть полезен.
         </p>
         <p className="section-block__text text-center">
-          Можешь также подробнее узнать{" "}
+          Можете также подробнее узнать{" "}
           <a href="/project" className="underline">
             о нашем проекте
           </a>{" "}
@@ -81,7 +62,7 @@ export default function Home() {
         <h2 className="section-block__title font-black">Зачем нужен клуб</h2>
 
         <p className="section-block__text">
-          Ты с рождения живёшь в Германии или только недавно сюда приехал? В
+          Вы с рождения живёте в Германии или только недавно сюда приехали? В
           любом случае иногда не хватает людей, с которыми не нужно долго
           объяснять свой культурный контекст, шутки и жизненный опыт.
         </p>
@@ -115,32 +96,23 @@ export default function Home() {
 
         <p className="section-block__text">
           Не обязательно писать каждый день или участвовать во всех обсуждениях.
-          Пользуйся клубом в комфортном для себя ритме.
+          Пользуйтесь клубом в комфортном для себя ритме.
         </p>
       </section>
 
       <section className="section-block text-foreground font-sans">
         <h2 className="section-block__title font-black">Как всё устроено</h2>
 
-        <ol className="section-block__list list-decimal">
-          <li className="section-block__list-item">
-            Заполни небольшую анкету и расскажи о себе.
-          </li>
+        <ol className="ml-5 list-decimal space-y-3 text-lg leading-8 text-darkest sm:ml-5">
+          <li>Пройдите процедуру регистрации.</li>
 
-          <li className="section-block__list-item">
-            Мы рассмотрим заявку вручную.
-          </li>
+          <li>Расскажите подробнее о себе, заполнив небольшую анкету.</li>
 
-          <li className="section-block__list-item">
-            После одобрения ты получишь доступ к клубу и пригласительную ссылку
+          <li>
+            После регистрации вы получите доступ в клуб и пригласительную ссылку
             для вступления в закрытую Telegram-группу.
           </li>
         </ol>
-
-        <p className="section-block__text">
-          Ручное рассмотрение заявок помогает сохранить доверительную атмосферу
-          и не превращать клуб в случайный открытый чат.
-        </p>
       </section>
 
       <section className="section-block text-foreground font-sans">
@@ -180,21 +152,19 @@ export default function Home() {
 
       <section className="section-block text-foreground font-sans">
         <h2 className="section-block__title font-black">
-          Хочешь присоединиться?
+          Хотите присоединиться?
         </h2>
 
         <p className="section-block__text">
-          Если тебе близка идея клуба, прочитай правила и немного расскажи о
-          себе. После рассмотрения заявки мы свяжемся с тобой по указанным
-          контактам.
+          Если вам близка идея клуба, прочитайте правила и
+          <button
+            type="button"
+            onClick={() => openLogin("register")}
+            className="underline cursor-pointer rounded-md px-2 py-2 font-medium text-secondary transition-colors hover:bg-white/10 hover:text-foreground"
+          >
+            зарегистрируйтесь.
+          </button>
         </p>
-
-        <div className="section-block__actions">
-          <a className="button underline" href="/join">
-            Заполнить анкету
-          </a>{" "}
-          <br />
-        </div>
       </section>
     </>
   );

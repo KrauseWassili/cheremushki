@@ -2,37 +2,108 @@
 
 import { useMemo, useState } from "react";
 import type { MemberProfile } from "@/types/member";
+import type { ProfileDraft } from "@/types/profile";
+import { isProfileReadyForDirectory } from "@/lib/profile";
 import { MemberCard } from "./member-card";
+import { MemberFilterSelect } from "./member-filter-select";
 
 type MemberDirectoryProps = {
   members: MemberProfile[];
 };
+
+const TELEGRAM_GROUP_URL = "https://t.me/+demo-invite-link";
 
 export function MemberDirectory({ members }: MemberDirectoryProps) {
   const [query, setQuery] = useState("");
   const [city, setCity] = useState("");
   const [selectedTag, setSelectedTag] = useState("");
 
+  const directoryMembers = useMemo(() => {
+    if (typeof window === "undefined") return members;
+
+    const stored = window.localStorage.getItem("mock-profile-draft");
+    if (!stored) return members;
+
+    try {
+      const draft = JSON.parse(stored) as ProfileDraft;
+
+      if (!isProfileReadyForDirectory(draft)) return members;
+
+      const syntheticMember: MemberProfile = {
+        id: "local-profile",
+        slug: draft.slug || "my-profile",
+        fullName:
+          [draft.firstName, draft.lastName].filter(Boolean).join(" ").trim() ||
+          "Мой профиль",
+        avatarUrl: draft.avatarUrl,
+        avatarOriginalUrl: draft.avatarOriginalUrl,
+        avatarPositionX: draft.avatarPositionX,
+        avatarPositionY: draft.avatarPositionY,
+        avatarScale: draft.avatarScale,
+        avatarCropSize: draft.avatarCropSize,
+        headline: draft.headline || "Профиль в процессе заполнения",
+        city: draft.city || "Не указан",
+        profession: draft.profession || "",
+        company: draft.company || "",
+        position: draft.position || "",
+        bio: draft.bio || "",
+        canHelpWith: draft.canHelpWith || "",
+        lookingFor: draft.lookingFor || "",
+        tags:
+          draft.tags
+            ?.split(",")
+            .map((tag) => tag.trim())
+            .filter(Boolean) || [],
+        languages: [],
+        email: draft.email || "",
+        telegramUsername: draft.telegram || "",
+        linkedinUrl: draft.linkedin || "",
+        websiteUrl: draft.website || "",
+        contactMode: draft.contactMode || "request",
+        telegramGroupUrl: TELEGRAM_GROUP_URL,
+        achievements: [],
+        joinedAt: new Date().toISOString(),
+      };
+
+      return [syntheticMember, ...members];
+    } catch {
+      return members;
+    }
+  }, [members]);
+
   const cities = useMemo(
     () =>
-      [...new Set(members.map((member) => member.city))].sort((a, b) =>
+      [...new Set(directoryMembers.map((member) => member.city))].sort((a, b) =>
         a.localeCompare(b, "ru"),
       ),
-    [members],
+    [directoryMembers],
   );
 
   const tags = useMemo(
     () =>
-      [...new Set(members.flatMap((member) => member.tags))].sort((a, b) =>
-        a.localeCompare(b, "ru"),
+      [...new Set(directoryMembers.flatMap((member) => member.tags))].sort(
+        (a, b) => a.localeCompare(b, "ru"),
       ),
-    [members],
+    [directoryMembers],
   );
 
   const filteredMembers = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase("ru");
 
-    return members.filter((member) => {
+    return directoryMembers.filter((member) => {
+      if (
+        !isProfileReadyForDirectory({
+          avatarUrl: member.avatarUrl,
+          firstName: member.fullName,
+          city: member.city,
+          headline: member.headline,
+          bio: member.bio,
+          canHelpWith: member.canHelpWith,
+          lookingFor: member.lookingFor,
+        })
+      ) {
+        return false;
+      }
       const searchableText = [
         member.fullName,
         member.headline,
@@ -53,12 +124,11 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
 
       const matchesCity = !city || member.city === city;
 
-      const matchesTag =
-        !selectedTag || member.tags.includes(selectedTag);
+      const matchesTag = !selectedTag || member.tags.includes(selectedTag);
 
       return matchesQuery && matchesCity && matchesTag;
     });
-  }, [members, query, city, selectedTag]);
+  }, [directoryMembers, query, city, selectedTag]);
 
   const hasFilters = Boolean(query || city || selectedTag);
 
@@ -71,48 +141,32 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
   return (
     <div className="grid gap-8 lg:grid-cols-[260px_minmax(0,760px)] lg:items-start lg:justify-center">
       <aside className="rounded-3xl border border-border bg-background p-5 lg:sticky lg:top-6">
-        <h2 className="font-black">Фильтры</h2>
+        <h3 className="font-black">Фильтры</h3>
 
-        <div className="mt-5 grid gap-5">
-          <label className="grid gap-2">
-            <span className="text-sm font-bold">Город</span>
-            <select
-              value={city}
-              onChange={(event) => setCity(event.target.value)}
-              className="h-11 rounded-xl border border-border bg-background px-3"
-            >
-              <option value="">Все города</option>
+        <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
+          <MemberFilterSelect
+            id="filter-city"
+            label="Город"
+            value={city}
+            options={cities}
+            placeholder="Все города"
+            onChange={setCity}
+          />
 
-              {cities.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="grid gap-2">
-            <span className="text-sm font-bold">Направление</span>
-            <select
-              value={selectedTag}
-              onChange={(event) => setSelectedTag(event.target.value)}
-              className="h-11 rounded-xl border border-border bg-background px-3"
-            >
-              <option value="">Все направления</option>
-
-              {tags.map((tag) => (
-                <option key={tag} value={tag}>
-                  {tag}
-                </option>
-              ))}
-            </select>
-          </label>
+          <MemberFilterSelect
+            id="filter-tag"
+            label="Направление"
+            value={selectedTag}
+            options={tags}
+            placeholder="Все направления"
+            onChange={setSelectedTag}
+          />
 
           {hasFilters && (
             <button
               type="button"
               onClick={resetFilters}
-              className="rounded-xl border border-border px-4 py-2 text-sm font-bold hover:bg-muted"
+              className="rounded-xl border border-border px-4 py-2 text-sm font-bold hover:bg-muted sm:col-span-2 lg:col-span-1"
             >
               Очистить фильтры
             </button>
@@ -140,6 +194,9 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
             <strong className="text-foreground">
               {filteredMembers.length}
             </strong>
+          </p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            В каталоге показываются профили, где заполнены все основные данные.
           </p>
         </div>
 
