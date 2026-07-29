@@ -3,6 +3,20 @@ from django.db import models
 from django.utils.text import slugify
 
 
+def avatar_upload_to(instance: "MemberProfile", filename: str) -> str:
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "jpg"
+    if ext not in {"jpg", "jpeg", "png", "webp"}:
+        ext = "jpg"
+    return f"avatars/user-{instance.user_id}.{ext}"
+
+
+def avatar_original_upload_to(instance: "MemberProfile", filename: str) -> str:
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "jpg"
+    if ext not in {"jpg", "jpeg", "png", "webp"}:
+        ext = "jpg"
+    return f"avatars/originals/user-{instance.user_id}.{ext}"
+
+
 class ContactMode(models.TextChoices):
     DIRECT = "direct", "Direkt"
     REQUEST = "request", "Anfrage"
@@ -42,9 +56,9 @@ class MemberProfile(models.Model):
     )
     telegram_group_url = models.URLField(blank=True, default="")
 
-    avatar = models.ImageField(upload_to="avatars/", blank=True, null=True)
+    avatar = models.ImageField(upload_to=avatar_upload_to, blank=True, null=True)
     avatar_original = models.ImageField(
-        upload_to="avatars/originals/", blank=True, null=True
+        upload_to=avatar_original_upload_to, blank=True, null=True
     )
     avatar_position_x = models.FloatField(default=0.5)
     avatar_position_y = models.FloatField(default=0.5)

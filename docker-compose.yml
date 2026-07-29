@@ -29,8 +29,9 @@ services:
       dockerfile: Dockerfile
     volumes:
       # Remove for production deployment, only for local development (live code + hot reload)
+      # Media liegt unter ./backend/media (über ./backend:/src), kein separates Volume —
+      # sonst landen Uploads unsichtbar im Docker-Volume statt auf dem Host.
       - ./backend:/src
-      - media:/src/media
       - staticfiles:/src/staticfiles
     expose:
       - "8000"
@@ -109,5 +110,4 @@ services:
 
 volumes:
   postgres-db:
-  media:
   staticfiles:
