@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>Kontaktanfrage</title>
+</head>
+<body>
+  <p>Hallo {{ to_user.first_name }},</p>
+  <p>
+    <strong>{{ from_user.full_name }}</strong> ({{ from_user.email }})
+    möchte Kontakt mit dir aufnehmen.
+  </p>
+  {% if message %}
+  <p>Nachricht:</p>
+  <blockquote>{{ message }}</blockquote>
+  {% endif %}
+  <p>Du kannst direkt per E-Mail antworten.</p>
+</body>
+</html>

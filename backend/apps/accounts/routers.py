@@ -1,8 +1,19 @@
 from adrf.routers import DefaultRouter
 
-from .views import RegisterViewSet, UserMeViewSet
+from .views import (
+    AccountDeleteViewSet,
+    LoginViewSet,
+    LogoutViewSet,
+    PasswordViewSet,
+    RegisterViewSet,
+    UserMeViewSet,
+)
 
 router = DefaultRouter()
 
-router.register("user", UserMeViewSet, "user")
-router.register("sign-up", RegisterViewSet, "sign-up")
+router.register("login", LoginViewSet, basename="login")
+router.register("user", UserMeViewSet, basename="user")
+router.register("sign-up", RegisterViewSet, basename="sign-up")
+router.register("logout", LogoutViewSet, basename="logout")
+router.register("password", PasswordViewSet, basename="password")
+router.register("delete", AccountDeleteViewSet, basename="account-delete")

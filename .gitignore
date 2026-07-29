@@ -12,6 +12,7 @@ frontend/.next
 
 # Agents
 .qodo/
+.cursor/
 frontend/AGENTS.md
 frontend/CLAUDE.md
 

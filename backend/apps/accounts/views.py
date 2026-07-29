@@ -1,17 +1,78 @@
 from adrf import mixins, viewsets
 from adrf.mixins import Response, get_data
 from asgiref.sync import sync_to_async
+from django.conf import settings
+from django.contrib.auth.password_validation import validate_password
+from django.contrib.auth.tokens import default_token_generator
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.mail import send_mail
+from django.template.loader import render_to_string
+from django.utils.encoding import force_bytes, force_str
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from rest_framework import status
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.throttling import ScopedRateThrottle
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.serializers import TokenRefreshSerializer
+from rest_framework_simplejwt.tokens import RefreshToken
+
 from apps.bot.tasks.email import send_telegram_invite_email
 
-from .serializers import RegisterSerializer, UserSerializer
+from .models import CustomUser
+from .serializers import (
+    AccountDeleteSerializer,
+    CustomTokenObtainPairSerializer,
+    LogoutSerializer,
+    PasswordChangeSerializer,
+    PasswordResetConfirmSerializer,
+    PasswordResetRequestSerializer,
+    RegisterSerializer,
+    UserSerializer,
+)
+
+
+class LoginViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
+
+    permission_classes = [AllowAny]
+    queryset = CustomUser.objects.none()
+    serializer_class = CustomTokenObtainPairSerializer
+
+    async def acreate(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        await sync_to_async(serializer.is_valid)(raise_exception=True)
+        return Response(serializer.validated_data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["post"], url_path="refresh")
+    async def refresh(self, request):
+        def _validate():
+            serializer = TokenRefreshSerializer(
+                data=request.data, context={"request": request}
+            )
+            try:
+                serializer.is_valid(raise_exception=True)
+            except TokenError as exc:
+                raise ValidationError({"detail": str(exc)}) from exc
+            return serializer.validated_data
+
+        try:
+            data = await sync_to_async(_validate)()
+        except ValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_401_UNAUTHORIZED)
+        return Response(data, status=status.HTTP_200_OK)
 
 
 class RegisterViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
+    """
+    Sign-up-Contract (stabil):
+    - 201 + { user, detail }
+    - keine JWT-Tokens (Telegram-Gate: Login erst nach is_active=True)
+    """
+
     serializer_class = RegisterSerializer
     permission_classes = [AllowAny]
+    queryset = CustomUser.objects.none()
 
     async def acreate(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -36,6 +97,7 @@ class RegisterViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
 class UserMeViewSet(viewsets.GenericViewSet):
     serializer_class = UserSerializer
     permission_classes = (IsAuthenticated,)
+    queryset = CustomUser.objects.none()
 
     @action(detail=False, methods=["get", "patch"], url_path="me")
     async def me(self, request):
@@ -50,3 +112,200 @@ class UserMeViewSet(viewsets.GenericViewSet):
 
         user_data = await get_data(self.get_serializer(request.user))
         return Response(user_data)
+
+
+class LogoutViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
+    serializer_class = LogoutSerializer
+    permission_classes = [IsAuthenticated]
+    queryset = CustomUser.objects.none()
+
+    async def acreate(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        await sync_to_async(serializer.is_valid)(raise_exception=True)
+
+        def _blacklist():
+            token = RefreshToken(serializer.validated_data["refresh"])
+            token.blacklist()
+
+        try:
+            await sync_to_async(_blacklist)()
+        except TokenError:
+            return Response(
+                {"detail": "Ungültiger Refresh-Token."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(
+            {"detail": "Erfolgreich abgemeldet."}, status=status.HTTP_200_OK
+        )
+
+
+class PasswordViewSet(viewsets.GenericViewSet):
+
+    queryset = CustomUser.objects.none()
+
+    def get_permissions(self):
+        if self.action == "change":
+            return [IsAuthenticated()]
+        return [AllowAny()]
+
+    def get_throttles(self):
+        if self.action in ("reset", "reset_confirm"):
+            self.throttle_scope = "password_reset"
+            return [ScopedRateThrottle()]
+        return super().get_throttles()
+
+    def get_serializer_class(self):
+        if self.action == "change":
+            return PasswordChangeSerializer
+        if self.action == "reset":
+            return PasswordResetRequestSerializer
+        if self.action == "reset_confirm":
+            return PasswordResetConfirmSerializer
+        return PasswordChangeSerializer
+
+    @action(detail=False, methods=["post"], url_path="change")
+    async def change(self, request):
+        serializer = self.get_serializer(
+            data=request.data, context={"request": request}
+        )
+        await sync_to_async(serializer.is_valid)(raise_exception=True)
+
+        def _change_password():
+            request.user.set_password(serializer.validated_data["new_password"])
+            request.user.save(update_fields=["password"])
+
+        await sync_to_async(_change_password)()
+        return Response(
+            {"detail": "Passwort wurde geändert."}, status=status.HTTP_200_OK
+        )
+
+    @action(detail=False, methods=["post"], url_path="reset")
+    async def reset(self, request):
+        serializer = self.get_serializer(data=request.data)
+        await sync_to_async(serializer.is_valid)(raise_exception=True)
+        email = serializer.validated_data["email"]
+
+        detail = {
+            "detail": (
+                "Falls ein Konto mit dieser E-Mail existiert, "
+                "wurde ein Reset-Link versendet."
+            )
+        }
+
+        def _send_reset_mail():
+            user = CustomUser.objects.filter(email__iexact=email).first()
+            if not (user and user.is_active):
+                return
+            uid = urlsafe_base64_encode(force_bytes(user.pk))
+            token = default_token_generator.make_token(user)
+            frontend_url = getattr(
+                settings, "FRONTEND_URL", "http://localhost:3000"
+            ).rstrip("/")
+            reset_url = f"{frontend_url}/password-reset/confirm?uid={uid}&token={token}"
+            html_message = render_to_string(
+                "emails/password_reset.html",
+                {"user": user, "reset_url": reset_url},
+            )
+            send_mail(
+                subject="Passwort zurücksetzen",
+                message=f"Passwort zurücksetzen: {reset_url}",
+                html_message=html_message,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[user.email],
+            )
+
+        await sync_to_async(_send_reset_mail)()
+        return Response(detail, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["post"], url_path="reset/confirm")
+    async def reset_confirm(self, request):
+        serializer = self.get_serializer(data=request.data)
+        await sync_to_async(serializer.is_valid)(raise_exception=True)
+
+        def _reset_password():
+            try:
+                uid = force_str(
+                    urlsafe_base64_decode(serializer.validated_data["uid"])
+                )
+                user = CustomUser.objects.get(pk=uid)
+            except (CustomUser.DoesNotExist, ValueError, TypeError, OverflowError):
+                return ("invalid_link", None)
+
+            if not default_token_generator.check_token(
+                user, serializer.validated_data["token"]
+            ):
+                return ("invalid_token", None)
+
+            new_password = serializer.validated_data["new_password"]
+            try:
+                validate_password(new_password, user=user)
+            except DjangoValidationError as exc:
+                return ("validation", exc.messages)
+
+            user.set_password(new_password)
+            user.save(update_fields=["password"])
+            return ("ok", None)
+
+        result, extra = await sync_to_async(_reset_password)()
+        if result == "invalid_link":
+            return Response(
+                {"detail": "Ungültiger Reset-Link."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if result == "invalid_token":
+            return Response(
+                {"detail": "Reset-Link ist ungültig oder abgelaufen."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if result == "validation":
+            raise ValidationError({"new_password": extra})
+
+        return Response(
+            {"detail": "Passwort wurde zurückgesetzt."}, status=status.HTTP_200_OK
+        )
+
+
+class AccountDeleteViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
+    serializer_class = AccountDeleteSerializer
+    permission_classes = [IsAuthenticated]
+    queryset = CustomUser.objects.none()
+
+    async def acreate(self, request, *args, **kwargs):
+        serializer = self.get_serializer(
+            data=request.data, context={"request": request}
+        )
+        await sync_to_async(serializer.is_valid)(raise_exception=True)
+
+        def _soft_delete():
+            from apps.profiles.models import MemberProfile
+
+            user = request.user
+            suffix = f"deleted-{user.pk}"
+            user.email = f"{suffix}@deleted.local"
+            user.first_name = "Gelöscht"
+            user.last_name = "Nutzer"
+            user.is_active = False
+            user.set_unusable_password()
+            user.save(
+                update_fields=[
+                    "email",
+                    "first_name",
+                    "last_name",
+                    "is_active",
+                    "password",
+                ]
+            )
+
+            try:
+                profile = user.member_profile
+            except MemberProfile.DoesNotExist:
+                profile = None
+            if profile is not None:
+                profile.is_directory_visible = False
+                profile.slug = f"deleted-{user.pk}"
+                profile.save(update_fields=["is_directory_visible", "slug"])
+
+        await sync_to_async(_soft_delete)()
+        return Response(
+            {"detail": "Konto wurde gelöscht."}, status=status.HTTP_200_OK
+        )

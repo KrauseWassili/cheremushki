@@ -38,8 +38,10 @@ THIRD_PARTY_APPS: Tuple[str, ...] = (
     "drf_spectacular",
 )
 
-LOCAL_APPS: Tuple[str, ...] = ("apps.accounts", "apps.bot")
-INSTALLED_APPS = THIRD_PARTY_APPS + DJANGO_APPS + LOCAL_APPS
+LOCAL_APPS: Tuple[str, ...] = ("apps.accounts", "apps.bot", "apps.profiles")
+INSTALLED_APPS = THIRD_PARTY_APPS + DJANGO_APPS + LOCAL_APPS + (
+    "rest_framework_simplejwt.token_blacklist",
+)
 
 AUTH_USER_MODEL = "accounts.CustomUser"
 
@@ -185,6 +187,7 @@ CELERY_TASK_DEFAULT_QUEUE = "default"
 CELERY_TASK_ROUTES = {
     "apps.bot.tasks.email.*": {"queue": "default"},
     "apps.bot.tasks.telegram_user.*": {"queue": "default"},
+    "apps.profiles.tasks.*": {"queue": "default"},
     "apps.*.tasks.generation.*": {"queue": "generation"},
 }
 
@@ -261,7 +264,8 @@ REST_FRAMEWORK = {
         "rest_framework.throttling.ScopedRateThrottle",
     ],
     "DEFAULT_THROTTLE_RATES": {
-        "contact": "5/hour",  # Spam protection for contact form submissions
+        "contact": "5/hour",
+        "password_reset": "5/hour",
     },
 }
 
@@ -298,6 +302,7 @@ SIMPLE_JWT = {
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="noreply@cheremushki.de")
+FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:3000")
 if DEBUG:
     EMAIL_HOST = env("EMAIL_HOST", default="mailcatcher")
     EMAIL_HOST_USER = ""
