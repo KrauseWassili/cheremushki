@@ -14,9 +14,14 @@ import { useApp } from "@/providers/AppProvider";
 import { AvatarUpload } from "@/components/members/avatar-upload";
 import { ApiError } from "@/lib/api";
 import { getProfileRequiredFieldsStatus } from "@/lib/profile";
+import {
+  dataUrlToBlob,
+  fetchMyProfile,
+  mapApiProfileToDraft,
+  saveMyProfile,
+  uploadMyAvatar,
+} from "@/lib/profiles";
 import type { ProfileDraft } from "@/types/profile";
-
-const STORAGE_KEY = "mock-profile-draft";
 
 type AccountSettingsPanel =
   | "name"
@@ -62,6 +67,7 @@ export default function ProfilePage() {
   const { user, isLoggedIn, updateCurrentUser } = useApp();
   const [draft, setDraft] = useState<ProfileDraft>(initialDraft);
   const [saved, setSaved] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
@@ -69,27 +75,37 @@ export default function ProfilePage() {
     useState<AccountSettingsPanel | null>(null);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (!user) return;
+    const currentUser = user;
 
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (stored) {
+    let cancelled = false;
+
+    async function loadProfile() {
       try {
-        setDraft((current) => ({ ...current, ...JSON.parse(stored) }));
+        const api = await fetchMyProfile();
+        if (cancelled) return;
+        setDraft(
+          mapApiProfileToDraft(api, {
+            firstName: currentUser.first_name,
+            lastName: currentUser.last_name,
+            email: currentUser.email,
+          }),
+        );
       } catch {
-        window.localStorage.removeItem(STORAGE_KEY);
+        if (cancelled) return;
+        setDraft((current) => ({
+          ...current,
+          firstName: currentUser.first_name,
+          lastName: currentUser.last_name,
+          email: currentUser.email,
+        }));
       }
     }
-  }, []);
 
-  useEffect(() => {
-    if (!user) return;
-
-    setDraft((current) => ({
-      ...current,
-      firstName: user.first_name,
-      lastName: user.last_name,
-      email: user.email,
-    }));
+    void loadProfile();
+    return () => {
+      cancelled = true;
+    };
   }, [user]);
 
   const requiredStatus = useMemo(
@@ -103,10 +119,11 @@ export default function ProfilePage() {
   ) {
     setDraft((current) => ({ ...current, [field]: value }));
     setSaved(false);
+    setSaveSuccess(null);
     setSaveError(null);
   }
 
-  function updateAvatarCrop(crop: {
+  async function updateAvatarCrop(crop: {
     x: number;
     y: number;
     scale: number;
@@ -124,21 +141,54 @@ export default function ProfilePage() {
       avatarCropSize: crop.size,
     };
 
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextDraft));
-      window.dispatchEvent(new Event("profile-draft-updated"));
+    setDraft(nextDraft);
+    setSaveError(null);
+    setSaveSuccess(null);
+
+    if (!crop.avatarUrl) {
+      setSaved(true);
+      return;
     }
 
-    setDraft(nextDraft);
-    setSaved(true);
-    setSaveError(null);
+    try {
+      const avatarBlob = await dataUrlToBlob(crop.avatarUrl);
+      const originalBlob = crop.sourceUrl
+        ? await dataUrlToBlob(crop.sourceUrl)
+        : null;
+      const api = await uploadMyAvatar(
+        avatarBlob,
+        {
+          x: crop.x,
+          y: crop.y,
+          scale: crop.scale,
+          size: crop.size,
+        },
+        originalBlob,
+      );
+      setDraft((current) =>
+        mapApiProfileToDraft(api, {
+          firstName: current.firstName,
+          lastName: current.lastName,
+          email: current.email,
+        }),
+      );
+      setSaved(true);
+      setSaveSuccess("Аватар успешно загружен.");
+    } catch (err) {
+      setSaveError(
+        err instanceof ApiError
+          ? err.message
+          : "Не удалось загрузить аватар.",
+      );
+      setSaved(false);
+      setSaveSuccess(null);
+    }
   }
 
-  function handleSave() {
-    if (typeof window === "undefined") return;
-
+  async function handleSave() {
     setIsSaving(true);
     setSaveError(null);
+    setSaveSuccess(null);
 
     const nextDraft = {
       ...draft,
@@ -152,11 +202,32 @@ export default function ProfilePage() {
         ),
     };
 
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextDraft));
-    window.dispatchEvent(new Event("profile-draft-updated"));
-    setDraft(nextDraft);
-    setSaved(true);
-    setIsSaving(false);
+    try {
+      const api = await saveMyProfile(nextDraft);
+      setDraft(
+        mapApiProfileToDraft(api, {
+          firstName: nextDraft.firstName || user?.first_name,
+          lastName: nextDraft.lastName || user?.last_name,
+          email: nextDraft.email || user?.email,
+        }),
+      );
+      setSaved(true);
+      setSaveSuccess(
+        api.is_directory_visible
+          ? "Профиль сохранён и виден в каталоге участников."
+          : "Профиль сохранён. Заполните все обязательные поля и загрузите аватар, чтобы появиться в каталоге.",
+      );
+    } catch (err) {
+      setSaveError(
+        err instanceof ApiError
+          ? err.message
+          : "Не удалось сохранить профиль.",
+      );
+      setSaved(false);
+      setSaveSuccess(null);
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   async function handleSaveAccountName({
@@ -164,25 +235,15 @@ export default function ProfilePage() {
     lastName,
   }: AccountNameValues) {
     const updatedUser = await updateCurrentUser({
-      email: draft.email,
       first_name: firstName.trim(),
       last_name: lastName.trim(),
     });
 
-    setDraft((current) => {
-      const nextDraft = {
-        ...current,
-        firstName: updatedUser.first_name,
-        lastName: updatedUser.last_name,
-      };
-
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextDraft));
-        window.dispatchEvent(new Event("profile-draft-updated"));
-      }
-
-      return nextDraft;
-    });
+    setDraft((current) => ({
+      ...current,
+      firstName: updatedUser.first_name,
+      lastName: updatedUser.last_name,
+    }));
   }
 
   if (!isLoggedIn) {
@@ -499,15 +560,23 @@ export default function ProfilePage() {
       </section>
 
       {saveError && (
-        <p className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <p className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
           {saveError}
+        </p>
+      )}
+
+      {saveSuccess && (
+        <p className="rounded-xl border border-border bg-muted/50 px-4 py-3 text-sm font-medium text-foreground">
+          {saveSuccess}
         </p>
       )}
 
       <div className="flex justify-end">
         <button
           type="button"
-          onClick={handleSave}
+          onClick={() => {
+            void handleSave();
+          }}
           disabled={isSaving}
           className={getSecondaryButtonClassName()}
         >

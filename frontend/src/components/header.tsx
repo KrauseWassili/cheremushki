@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useApp } from "@/providers/AppProvider";
 import { isProfileReadyForDirectory } from "@/lib/profile";
+import { fetchMyProfile, mapApiProfileToDraft } from "@/lib/profiles";
 import { LogIn, LogOut } from "lucide-react";
 
 export default function Header() {
@@ -13,30 +14,30 @@ export default function Header() {
   const [isProfileReady, setIsProfileReady] = useState(false);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (!isLoggedIn) {
+      setIsProfileReady(false);
+      return;
+    }
 
-    function updateProfileStatus() {
-      const stored = window.localStorage.getItem("mock-profile-draft");
-      if (!stored) {
-        setIsProfileReady(false);
-        return;
-      }
+    let cancelled = false;
 
+    async function loadStatus() {
       try {
-        const draft = JSON.parse(stored);
-        setIsProfileReady(isProfileReadyForDirectory(draft));
+        const api = await fetchMyProfile();
+        const draft = mapApiProfileToDraft(api);
+        if (!cancelled) {
+          setIsProfileReady(isProfileReadyForDirectory(draft));
+        }
       } catch {
-        setIsProfileReady(false);
+        if (!cancelled) setIsProfileReady(false);
       }
     }
 
-    updateProfileStatus();
-    window.addEventListener("profile-draft-updated", updateProfileStatus);
-
+    loadStatus();
     return () => {
-      window.removeEventListener("profile-draft-updated", updateProfileStatus);
+      cancelled = true;
     };
-  }, []);
+  }, [isLoggedIn, pathname]);
 
   const navItems = [
     { href: "/", label: "Приветствие" },
@@ -92,7 +93,9 @@ export default function Header() {
                 </Link>
                 <button
                   type="button"
-                  onClick={() => logout()}
+                  onClick={() => {
+                    void logout();
+                  }}
                   className="inline-flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-white/10 hover:text-foreground"
                 >
                   <span>Выйти</span>

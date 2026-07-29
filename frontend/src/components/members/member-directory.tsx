@@ -1,96 +1,40 @@
 "use client";
 
-import { useMemo, useState } from "react";
 import type { MemberProfile } from "@/types/member";
-import type { ProfileDraft } from "@/types/profile";
-import { isProfileReadyForDirectory } from "@/lib/profile";
 import { MemberCard } from "./member-card";
 import { MemberFilterSelect } from "./member-filter-select";
+import { useMemo, useState } from "react";
+import { isProfileReadyForDirectory } from "@/lib/profile";
 
 type MemberDirectoryProps = {
   members: MemberProfile[];
 };
-
-const TELEGRAM_GROUP_URL = "https://t.me/+demo-invite-link";
 
 export function MemberDirectory({ members }: MemberDirectoryProps) {
   const [query, setQuery] = useState("");
   const [city, setCity] = useState("");
   const [selectedTag, setSelectedTag] = useState("");
 
-  const directoryMembers = useMemo(() => {
-    if (typeof window === "undefined") return members;
-
-    const stored = window.localStorage.getItem("mock-profile-draft");
-    if (!stored) return members;
-
-    try {
-      const draft = JSON.parse(stored) as ProfileDraft;
-
-      if (!isProfileReadyForDirectory(draft)) return members;
-
-      const syntheticMember: MemberProfile = {
-        id: "local-profile",
-        slug: draft.slug || "my-profile",
-        fullName:
-          [draft.firstName, draft.lastName].filter(Boolean).join(" ").trim() ||
-          "Мой профиль",
-        avatarUrl: draft.avatarUrl,
-        avatarOriginalUrl: draft.avatarOriginalUrl,
-        avatarPositionX: draft.avatarPositionX,
-        avatarPositionY: draft.avatarPositionY,
-        avatarScale: draft.avatarScale,
-        avatarCropSize: draft.avatarCropSize,
-        headline: draft.headline || "Профиль в процессе заполнения",
-        city: draft.city || "Не указан",
-        profession: draft.profession || "",
-        company: draft.company || "",
-        position: draft.position || "",
-        bio: draft.bio || "",
-        canHelpWith: draft.canHelpWith || "",
-        lookingFor: draft.lookingFor || "",
-        tags:
-          draft.tags
-            ?.split(",")
-            .map((tag) => tag.trim())
-            .filter(Boolean) || [],
-        languages: [],
-        email: draft.email || "",
-        telegramUsername: draft.telegram || "",
-        linkedinUrl: draft.linkedin || "",
-        websiteUrl: draft.website || "",
-        contactMode: draft.contactMode || "request",
-        telegramGroupUrl: TELEGRAM_GROUP_URL,
-        achievements: [],
-        joinedAt: new Date().toISOString(),
-      };
-
-      return [syntheticMember, ...members];
-    } catch {
-      return members;
-    }
-  }, [members]);
-
   const cities = useMemo(
     () =>
-      [...new Set(directoryMembers.map((member) => member.city))].sort((a, b) =>
-        a.localeCompare(b, "ru"),
+      [...new Set(members.map((member) => member.city).filter(Boolean))].sort(
+        (a, b) => a.localeCompare(b, "ru"),
       ),
-    [directoryMembers],
+    [members],
   );
 
   const tags = useMemo(
     () =>
-      [...new Set(directoryMembers.flatMap((member) => member.tags))].sort(
-        (a, b) => a.localeCompare(b, "ru"),
+      [...new Set(members.flatMap((member) => member.tags))].sort((a, b) =>
+        a.localeCompare(b, "ru"),
       ),
-    [directoryMembers],
+    [members],
   );
 
   const filteredMembers = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase("ru");
 
-    return directoryMembers.filter((member) => {
+    return members.filter((member) => {
       if (
         !isProfileReadyForDirectory({
           avatarUrl: member.avatarUrl,
@@ -104,6 +48,7 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
       ) {
         return false;
       }
+
       const searchableText = [
         member.fullName,
         member.headline,
@@ -121,14 +66,12 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
 
       const matchesQuery =
         !normalizedQuery || searchableText.includes(normalizedQuery);
-
       const matchesCity = !city || member.city === city;
-
       const matchesTag = !selectedTag || member.tags.includes(selectedTag);
 
       return matchesQuery && matchesCity && matchesTag;
     });
-  }, [directoryMembers, query, city, selectedTag]);
+  }, [members, query, city, selectedTag]);
 
   const hasFilters = Boolean(query || city || selectedTag);
 
@@ -191,9 +134,7 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
 
           <p className="mt-3 text-sm text-muted-foreground">
             Найдено:{" "}
-            <strong className="text-foreground">
-              {filteredMembers.length}
-            </strong>
+            <strong className="text-foreground">{filteredMembers.length}</strong>
           </p>
           <p className="mt-2 text-xs text-muted-foreground">
             В каталоге показываются профили, где заполнены все основные данные.

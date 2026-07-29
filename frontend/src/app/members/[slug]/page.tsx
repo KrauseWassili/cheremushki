@@ -1,28 +1,83 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { LocalMemberProfilePage } from "@/components/members/local-member-profile-page";
+import { useParams } from "next/navigation";
 import { MemberProfilePage } from "@/components/members/member-profile-page";
-import { mockMembers } from "@/data/mock-members";
+import { useApp } from "@/providers/AppProvider";
+import { fetchMemberProfile } from "@/lib/profiles";
+import type { MemberProfile } from "@/types/member";
+import { ApiError } from "@/lib/api";
 
-type MemberPageProps = {
-  params: Promise<{
-    slug: string;
-  }>;
-};
+export default function MemberPage() {
+  const params = useParams<{ slug: string }>();
+  const slug = params.slug;
+  const { isLoggedIn, authLoading, openLogin } = useApp();
+  const [member, setMember] = useState<MemberProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-export function generateStaticParams() {
-  return mockMembers.map((member) => ({
-    slug: member.slug,
-  }));
-}
+  useEffect(() => {
+    if (authLoading) return;
+    if (!isLoggedIn || !slug) {
+      setLoading(false);
+      return;
+    }
 
-export default async function MemberPage({
-  params,
-}: MemberPageProps) {
-  const { slug } = await params;
+    let cancelled = false;
 
-  const member = mockMembers.find(
-    (candidate) => candidate.slug === slug,
-  );
+    async function load() {
+      setLoading(true);
+      setError(null);
+      try {
+        const data = await fetchMemberProfile(slug);
+        if (!cancelled) setMember(data);
+      } catch (err) {
+        if (!cancelled) {
+          setMember(null);
+          setError(
+            err instanceof ApiError && err.status === 404
+              ? "Профиль не найден."
+              : err instanceof ApiError
+                ? err.message
+                : "Не удалось загрузить профиль.",
+          );
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [slug, isLoggedIn, authLoading]);
+
+  if (authLoading || loading) {
+    return (
+      <main className="mx-auto w-full max-w-4xl px-4 py-16 text-center text-muted-foreground">
+        Загрузка…
+      </main>
+    );
+  }
+
+  if (!isLoggedIn) {
+    return (
+      <main className="mx-auto w-full max-w-lg px-4 py-16 text-center">
+        <p className="text-muted-foreground">
+          Войдите, чтобы открыть профиль участника.
+        </p>
+        <button
+          type="button"
+          onClick={() => openLogin("login")}
+          className="button-gray-rounded mt-6"
+        >
+          Войти
+        </button>
+      </main>
+    );
+  }
 
   return (
     <main className="mx-auto w-full max-w-4xl px-4 py-4 sm:px-6 sm:py-6">
@@ -33,10 +88,12 @@ export default async function MemberPage({
         ← Все участники
       </Link>
 
-      {member ? (
-        <MemberProfilePage initialMember={member} />
+      {error || !member ? (
+        <p className="text-center text-muted-foreground">
+          {error ?? "Профиль не найден."}
+        </p>
       ) : (
-        <LocalMemberProfilePage slug={slug} />
+        <MemberProfilePage initialMember={member} />
       )}
     </main>
   );

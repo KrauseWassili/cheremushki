@@ -1,14 +1,86 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import { MemberDirectory } from "@/components/members/member-directory";
-import { mockMembers } from "@/data/mock-members";
+import { useApp } from "@/providers/AppProvider";
+import { fetchMemberProfiles } from "@/lib/profiles";
+import type { MemberProfile } from "@/types/member";
+import { ApiError } from "@/lib/api";
 
 export default function MembersPage() {
+  const { isLoggedIn, authLoading, openLogin } = useApp();
+  const [members, setMembers] = useState<MemberProfile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (authLoading) return;
+
+    if (!isLoggedIn) {
+      setLoading(false);
+      setMembers([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function load() {
+      setLoading(true);
+      setError(null);
+      try {
+        const data = await fetchMemberProfiles();
+        if (!cancelled) setMembers(data);
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof ApiError
+              ? err.message
+              : "Не удалось загрузить участников.",
+          );
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoggedIn, authLoading]);
+
+  if (authLoading || loading) {
+    return (
+      <main className="mx-auto w-full max-w-6xl px-4 py-16 text-center text-muted-foreground">
+        Загрузка…
+      </main>
+    );
+  }
+
+  if (!isLoggedIn) {
+    return (
+      <main className="mx-auto w-full max-w-lg px-4 py-16 text-center">
+        <h1 className="text-3xl font-black">Участники</h1>
+        <p className="mt-4 text-muted-foreground">
+          Войдите в аккаунт, чтобы видеть каталог участников.
+        </p>
+        <button
+          type="button"
+          onClick={() => openLogin("login")}
+          className="button-gray-rounded mt-6"
+        >
+          Войти
+        </button>
+      </main>
+    );
+  }
+
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-4 sm:px-6 sm:py-6">
       <header className="mx-auto mb-10 max-w-3xl text-center">
         <h1 className="mt-3 text-4xl font-black tracking-tight sm:text-5xl">
           Участники
         </h1>
-
         <p className="mt-5 text-base leading-7 text-muted-foreground sm:text-lg">
           Наше сообщество — это потенциал, сложенный из опыта, знаний и
           возможностей каждого из нас. Вместе мы находим решения, воплощаем идеи
@@ -17,7 +89,11 @@ export default function MembersPage() {
         </p>
       </header>
 
-      <MemberDirectory members={mockMembers} />
+      {error ? (
+        <p className="text-center text-destructive">{error}</p>
+      ) : (
+        <MemberDirectory members={members} />
+      )}
     </main>
   );
 }

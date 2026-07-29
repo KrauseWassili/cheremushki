@@ -1,7 +1,7 @@
 "use client";
 
 import {FormEvent, useEffect, useState} from "react";
-import {Loader2, Sun, X} from "lucide-react";
+import {Loader2, X} from "lucide-react";
 import {ApiError, type ApiFieldErrors} from "@/lib/api";
 
 interface LoginModalProps {
@@ -19,7 +19,7 @@ interface LoginModalProps {
         regLastName: string,
         regPassword: string,
         regPasswordConfirm: string
-    ) => Promise<void>;
+    ) => Promise<string>;
 }
 
 const emptyRegisterErrors = {
@@ -33,6 +33,7 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
     const [rememberMe, setRememberMe] = useState(true);
     const [loginError, setLoginError] = useState<string | null>(null);
     const [registerErrors, setRegisterErrors] = useState(emptyRegisterErrors);
+    const [registerSuccess, setRegisterSuccess] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     // Register state
@@ -52,6 +53,7 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
         setMode(nextMode);
         setLoginError(null);
         setRegisterErrors(emptyRegisterErrors);
+        setRegisterSuccess(null);
     };
 
     const handleSubmit = async (event: FormEvent) => {
@@ -76,20 +78,26 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
     const handleRegister = async (event: FormEvent) => {
         event.preventDefault();
         setRegisterErrors(emptyRegisterErrors);
+        setRegisterSuccess(null);
         setIsSubmitting(true);
 
         try {
-            await onRegister(
+            const detail = await onRegister(
                 regEmail.trim(),
                 regFirstName.trim(),
                 regLastName.trim(),
                 regPassword,
                 regPasswordConfirm
             );
+            setRegisterSuccess(detail);
+            setRegPassword("");
+            setRegPasswordConfirm("");
         } catch (err) {
             if (err instanceof ApiError) {
                 setRegisterErrors({
-                    general: err.generalErrors,
+                    general: err.generalErrors.length
+                        ? err.generalErrors
+                        : [err.message],
                     fields: err.fieldErrors,
                 });
             } else {
@@ -219,6 +227,21 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                     )}
                     {mode === "register" && (
                         <form onSubmit={handleRegister} className="p-6 space-y-4">
+                            {registerSuccess ? (
+                                <div className="space-y-4">
+                                    <div className="rounded-lg border border-border bg-muted/40 p-4 text-sm leading-6 text-foreground">
+                                        {registerSuccess}
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => switchMode("login")}
+                                        className="button-gray-rounded w-full py-3"
+                                    >
+                                        Zum Login
+                                    </button>
+                                </div>
+                            ) : (
+                                <>
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
                                     <label
@@ -346,6 +369,8 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                                     "Создать аккаунт"
                                 )}
                             </button>
+                                </>
+                            )}
                         </form>
                     )}
                 </div>

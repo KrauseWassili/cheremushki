@@ -35,6 +35,10 @@ export function extractApiErrors(data: unknown): {
 
   if (typeof record.detail === "string") {
     generalErrors.push(record.detail);
+  } else if (Array.isArray(record.detail)) {
+    generalErrors.push(
+      ...record.detail.filter((item): item is string => typeof item === "string"),
+    );
   }
 
   for (const [key, value] of Object.entries(record)) {

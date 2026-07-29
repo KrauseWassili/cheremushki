@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import { hasVisibleContactActions } from "@/lib/member-contact";
+import { sendContactRequest } from "@/lib/profiles";
+import { ApiError } from "@/lib/api";
 import type { MemberProfile } from "@/types/member";
-
-const DEFAULT_TELEGRAM_GROUP_URL = "https://t.me/+demo-invite-link";
 
 type MemberContactActionsProps = {
   member: MemberProfile;
@@ -18,6 +18,8 @@ export function MemberContactActions({
   const [isRequestOpen, setIsRequestOpen] = useState(false);
   const [requestText, setRequestText] = useState("");
   const [isRequestSent, setIsRequestSent] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   const buttonClassName = compact
     ? "rounded-xl border border-border px-4 py-2 text-sm font-bold transition hover:bg-muted"
@@ -32,9 +34,17 @@ export function MemberContactActions({
   }
 
   if (member.contactMode === "group") {
+    if (!member.telegramGroupUrl) {
+      return (
+        <p className="text-sm text-muted-foreground">
+          Ссылка на группу пока не указана.
+        </p>
+      );
+    }
+
     return (
       <a
-        href={member.telegramGroupUrl || DEFAULT_TELEGRAM_GROUP_URL}
+        href={member.telegramGroupUrl}
         target="_blank"
         rel="noreferrer"
         className={buttonClassName}
@@ -52,6 +62,7 @@ export function MemberContactActions({
           onClick={() => {
             setIsRequestOpen(true);
             setIsRequestSent(false);
+            setSendError(null);
           }}
           className={buttonClassName}
         >
@@ -65,7 +76,7 @@ export function MemberContactActions({
                 <div>
                   <h3 className="text-xl font-black">Запрос контакта</h3>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Сообщение позже будет отправлено участнику по email.
+                    Сообщение будет отправлено участнику по email.
                   </p>
                 </div>
 
@@ -79,8 +90,8 @@ export function MemberContactActions({
               </div>
 
               {isRequestSent ? (
-                <p className="mt-5 rounded-xl bg-emerald-100 px-4 py-3 text-sm font-bold text-emerald-800">
-                  Запрос сохранён в демо-режиме.
+                <p className="mt-5 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm font-bold">
+                  Запрос отправлен.
                 </p>
               ) : (
                 <>
@@ -90,6 +101,10 @@ export function MemberContactActions({
                     placeholder={`Коротко напишите, зачем хотите связаться с ${member.fullName}`}
                     className="mt-5 min-h-36 w-full rounded-xl border border-border bg-background px-3 py-3 outline-none focus:border-foreground/40 focus:ring-4 focus:ring-foreground/5"
                   />
+
+                  {sendError && (
+                    <p className="mt-3 text-sm text-destructive">{sendError}</p>
+                  )}
 
                   <div className="mt-4 flex justify-end gap-3">
                     <button
@@ -102,11 +117,29 @@ export function MemberContactActions({
 
                     <button
                       type="button"
-                      disabled={!requestText.trim()}
-                      onClick={() => setIsRequestSent(true)}
+                      disabled={!requestText.trim() || isSending}
+                      onClick={async () => {
+                        setIsSending(true);
+                        setSendError(null);
+                        try {
+                          await sendContactRequest(
+                            member.slug,
+                            requestText.trim(),
+                          );
+                          setIsRequestSent(true);
+                        } catch (err) {
+                          setSendError(
+                            err instanceof ApiError
+                              ? err.message
+                              : "Не удалось отправить запрос.",
+                          );
+                        } finally {
+                          setIsSending(false);
+                        }
+                      }}
                       className="rounded-xl bg-foreground px-4 py-2.5 text-sm font-bold text-background disabled:opacity-50"
                     >
-                      Отправить запрос
+                      {isSending ? "Отправка…" : "Отправить запрос"}
                     </button>
                   </div>
                 </>
@@ -132,7 +165,7 @@ export function MemberContactActions({
 
       {member.telegramUsername && (
         <a
-          href={`https://t.me/${member.telegramUsername}`}
+          href={`https://t.me/${member.telegramUsername.replace(/^@/, "")}`}
           target="_blank"
           rel="noreferrer"
           className={buttonClassName}

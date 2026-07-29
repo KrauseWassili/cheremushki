@@ -1,3 +1,4 @@
+import { MapPin } from "lucide-react";
 import type { MemberProfile } from "@/types/member";
 import {
   getContactModeLabel,
@@ -57,8 +58,9 @@ export function MemberProfileView({
                   {member.headline}
                 </p>
 
-                <p className="mt-3 text-sm text-muted-foreground">
-                  📍 {member.city}
+                <p className="mt-3 inline-flex items-center gap-1.5 text-sm text-muted-foreground">
+                  <MapPin size={14} aria-hidden />
+                  {member.city}
                 </p>
               </div>
 

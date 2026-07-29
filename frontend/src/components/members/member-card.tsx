@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { MapPin } from "lucide-react";
 import { getContactModeLabel } from "@/lib/member-contact";
 import type { MemberProfile } from "@/types/member";
 
@@ -8,7 +9,6 @@ type MemberCardProps = {
 
 export function MemberCard({ member }: MemberCardProps) {
   const profileMeta = [
-    `📍 ${member.city}`,
     member.profession,
     member.position,
     member.company,
@@ -49,11 +49,15 @@ export function MemberCard({ member }: MemberCardProps) {
                 {member.headline}
               </p>
 
-              {profileMeta.length > 0 && (
-                <p className="mt-2 text-sm text-muted-foreground">
-                  {profileMeta.join(" · ")}
-                </p>
-              )}
+              <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+                <span className="inline-flex items-center gap-1">
+                  <MapPin size={14} aria-hidden />
+                  {member.city}
+                </span>
+                {profileMeta.length > 0 && (
+                  <span>{profileMeta.join(" · ")}</span>
+                )}
+              </p>
             </div>
 
             <span className="h-fit w-fit rounded-full bg-muted px-3 py-1 text-xs font-bold text-foreground">

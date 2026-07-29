@@ -7,6 +7,8 @@ export interface User {
   full_name?: string;
   is_active: boolean;
   is_staff: boolean;
+  telegram_joined?: boolean;
+  has_telegram_invite?: boolean;
 }
 
 export function getUserDisplayName(user: User): string {
@@ -26,4 +28,9 @@ export function getUserInitials(user: User): string {
 export interface TokenPair {
   access: string;
   refresh: string;
+}
+
+export interface RegisterResponse {
+  user: User;
+  detail: string;
 }

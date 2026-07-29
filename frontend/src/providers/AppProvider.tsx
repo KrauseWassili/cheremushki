@@ -13,6 +13,7 @@ import {
   clearTokens,
   fetchCurrentUser,
   login as loginRequest,
+  logoutRequest,
   register as registerRequest,
   storeTokens,
   updateCurrentUser as updateCurrentUserRequest,
@@ -22,7 +23,6 @@ import type { User } from "@/types/user";
 type LoginMode = "login" | "register";
 
 interface AppContextValue {
-  // Auth
   user: User | null;
   isLoggedIn: boolean;
   authLoading: boolean;
@@ -31,21 +31,17 @@ interface AppContextValue {
     password: string,
     rememberMe?: boolean,
   ) => Promise<void>;
-
   signUp: (
     email: string,
     firstName: string,
     lastName: string,
     password: string,
     passwordConfirm: string,
-  ) => Promise<void>;
-
-  logout: () => void;
+  ) => Promise<string>;
+  logout: () => Promise<void>;
   updateCurrentUser: (
-    data: Pick<User, "email" | "first_name" | "last_name">,
+    data: Pick<User, "first_name" | "last_name">,
   ) => Promise<User>;
-
-  // Login modal
   showLogin: boolean;
   loginMode: LoginMode;
   openLogin: (mode?: LoginMode) => void;
@@ -93,20 +89,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
       password: string,
       passwordConfirm: string,
     ) => {
-      const tokens = await registerRequest(
+      // Telegram-Gate: keine Tokens, Login erst nach Aktivierung
+      const result = await registerRequest(
         email,
         firstName,
         lastName,
         password,
         passwordConfirm,
       );
-      storeTokens(tokens, true);
-      const currentUser = await fetchCurrentUser(tokens.access);
-      setUser(currentUser);
-      setShowLogin(false);
-      router.push("/members");
+      return result.detail;
     },
-    [router],
+    [],
   );
 
   const login = useCallback(
@@ -121,13 +114,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [router],
   );
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    await logoutRequest();
     clearTokens();
     setUser(null);
-  }, []);
+    router.push("/");
+  }, [router]);
 
   const updateCurrentUser = useCallback(
-    async (data: Pick<User, "email" | "first_name" | "last_name">) => {
+    async (data: Pick<User, "first_name" | "last_name">) => {
       const updatedUser = await updateCurrentUserRequest(data);
       setUser(updatedUser);
       return updatedUser;
@@ -161,21 +156,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
 export function useApp() {
   const ctx = useContext(AppContext);
-  // During SSR the context may not be initialized yet — return a safe no-op
-  // fallback so the server render doesn't crash. Hydration fixes it client-side.
   if (!ctx) {
     return {
       user: null,
       isLoggedIn: false,
       authLoading: true,
-      signUp: async () => {},
+      signUp: async () => "",
       login: async () => {},
-      logout: () => {},
+      logout: async () => {},
       updateCurrentUser: async () => {
         throw new Error("App context is not initialized");
       },
       showLogin: false,
-      loginMode: "login",
+      loginMode: "login" as const,
       openLogin: () => {},
       closeLogin: () => {},
     } satisfies AppContextValue;
