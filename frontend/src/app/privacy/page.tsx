@@ -40,7 +40,7 @@ export default function PrivacyPage() {
           <br />
           Германия
           <br />
-          Email:{" "}
+          Почта:{" "}
           <a href="mailto:[EMAIL]" className="underline">
             [EMAIL]
           </a>
@@ -203,69 +203,10 @@ export default function PrivacyPage() {
         </p>
       </section>
 
-      <section className="section-block">
-        <h2 className="section-block__title font-black">
-          6. Поставщики технических услуг
-        </h2>
-
-        <p className="section-block__text">
-          Для работы сайта мы используем поставщиков технической инфраструктуры,
-          которые могут обрабатывать данные по нашему поручению.
-        </p>
-
-        <h3 className="section-block__subtitle font-bold">Vercel</h3>
-
-        <p className="section-block__text">
-          Сайт размещается на инфраструктуре Vercel. Vercel может обрабатывать
-          технические данные запросов, необходимые для доставки страниц,
-          обеспечения безопасности и диагностики ошибок.
-        </p>
-
-        <p className="section-block__text">Поставщик: Vercel Inc.</p>
-
-        <p className="section-block__text">
-          Дополнительная информация:{" "}
-          <a
-            href="https://vercel.com/legal/privacy-policy"
-            target="_blank"
-            rel="noreferrer"
-            className="underline"
-          >
-            политика конфиденциальности Vercel
-          </a>
-          .
-        </p>
-
-        <h3 className="section-block__subtitle font-bold">Supabase</h3>
-
-        <p className="section-block__text">
-          Данные заявок хранятся в базе данных Supabase PostgreSQL. Выбранный
-          регион размещения проекта: [УКАЗАТЬ РЕГИОН].
-        </p>
-
-        <p className="section-block__text">Поставщик: Supabase Inc.</p>
-
-        <p className="section-block__text">
-          Дополнительная информация:{" "}
-          <a
-            href="https://supabase.com/privacy"
-            target="_blank"
-            rel="noreferrer"
-            className="underline"
-          >
-            политика конфиденциальности Supabase
-          </a>
-          .
-        </p>
-
-        <p className="section-block__text">
-          С поставщиками, обрабатывающими данные по нашему поручению,
-          заключаются необходимые соглашения об обработке данных.
-        </p>
-      </section>
+         
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">7. Telegram</h2>
+        <h2 className="section-block__title font-black">6. Telegram</h2>
 
         <p className="section-block__text">
           После одобрения заявки участнику может быть направлена ссылка на
@@ -295,7 +236,7 @@ export default function PrivacyPage() {
 
       <section className="section-block">
         <h2 className="section-block__title font-black">
-          8. Cookies и аналитика
+          7. Cookies и аналитика
         </h2>
 
         <p className="section-block__text">
@@ -312,7 +253,7 @@ export default function PrivacyPage() {
 
       <section className="section-block">
         <h2 className="section-block__title font-black">
-          9. Передача данных другим лицам
+          8. Передача данных другим лицам
         </h2>
 
         <p className="section-block__text">
@@ -333,7 +274,7 @@ export default function PrivacyPage() {
 
       <section className="section-block">
         <h2 className="section-block__title font-black">
-          10. Передача данных за пределы ЕС
+          9. Передача данных за пределы ЕС
         </h2>
 
         <p className="section-block__text">
@@ -356,7 +297,7 @@ export default function PrivacyPage() {
 
       <section className="section-block">
         <h2 className="section-block__title font-black">
-          11. Права пользователя
+          10. Права пользователя
         </h2>
 
         <p className="section-block__text">
@@ -405,7 +346,7 @@ export default function PrivacyPage() {
 
       <section className="section-block">
         <h2 className="section-block__title font-black">
-          12. Право подать жалобу
+          11. Право подать жалобу
         </h2>
 
         <p className="section-block__text">
@@ -414,13 +355,13 @@ export default function PrivacyPage() {
         </p>
 
         <address className="section-block__text not-italic">
-          Der Landesbeauftragte für Datenschutz und Informationsfreiheit
+          Уполномоченный по защите данных и свободе информации
           <br />
           Georgstraße 122–124
           <br />
           27570 Bremerhaven
           <br />
-          Email:{" "}
+          Почта:{" "}
           <a href="mailto:office@datenschutz.bremen.de" className="underline">
             office@datenschutz.bremen.de
           </a>
@@ -441,7 +382,7 @@ export default function PrivacyPage() {
       </section>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">13. Защита данных</h2>
+        <h2 className="section-block__title font-black">12. Защита данных</h2>
 
         <p className="section-block__text">
           Мы принимаем разумные технические и организационные меры для защиты
@@ -456,7 +397,7 @@ export default function PrivacyPage() {
 
       <section className="section-block">
         <h2 className="section-block__title font-black">
-          14. Изменение политики
+          13. Изменение политики
         </h2>
 
         <p className="section-block__text">

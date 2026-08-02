@@ -21,10 +21,10 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Cheremushki",
-  description: "Local russian community",
+  description: "Локальное русскоязычное сообщество",
   openGraph: {
     title: "Cheremushki",
-    description: "Local russian community",
+    description: "Локальное русскоязычное сообщество",
     url: "https://cheremushki.vercel.app",
     siteName: "Cheremushki",
     images: [
@@ -32,16 +32,16 @@ export const metadata: Metadata = {
         url: "https://cheremushki.vercel.app/social-preview.png",
         width: 1200,
         height: 630,
-        alt: "Cheremushki preview",
+        alt: "Превью Cheremushki",
       },
     ],
-    locale: "en_US",
+    locale: "ru_RU",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
     title: "Cheremushki",
-    description: "Local russian community",
+    description: "Локальное русскоязычное сообщество",
     images: ["https://Cheremushki.vercel.app/social-preview.png"],
   },
 };
@@ -52,7 +52,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="ru" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased h-screen overflow-hidden flex flex-col bg-bg`}
       >

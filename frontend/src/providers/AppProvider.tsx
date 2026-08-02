@@ -89,7 +89,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       password: string,
       passwordConfirm: string,
     ) => {
-      // Telegram-Gate: keine Tokens, Login erst nach Aktivierung
+      // Telegram gate: токены не выдаются до активации аккаунта.
       const result = await registerRequest(
         email,
         firstName,
