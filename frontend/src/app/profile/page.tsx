@@ -3,7 +3,6 @@
 import {
   type Dispatch,
   type FormEvent,
-  type ReactNode,
   type SetStateAction,
   useEffect,
   useMemo,
@@ -13,6 +12,10 @@ import Link from "next/link";
 import { useApp } from "@/providers/AppProvider";
 import { AvatarUpload } from "@/components/members/avatar-upload";
 import { ApiError } from "@/lib/api";
+import {
+  changePassword,
+  deleteAccount,
+} from "@/lib/auth";
 import { getProfileRequiredFieldsStatus } from "@/lib/profile";
 import {
   dataUrlToBlob,
@@ -27,7 +30,6 @@ type AccountSettingsPanel =
   | "name"
   | "email"
   | "password"
-  | "reset-password"
   | "delete";
 
 type AccountNameValues = {
@@ -64,7 +66,7 @@ const initialDraft: ProfileDraft = {
 };
 
 export default function ProfilePage() {
-  const { user, isLoggedIn, updateCurrentUser } = useApp();
+  const { user, isLoggedIn, logout, updateCurrentUser } = useApp();
   const [draft, setDraft] = useState<ProfileDraft>(initialDraft);
   const [saved, setSaved] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
@@ -244,6 +246,11 @@ export default function ProfilePage() {
       firstName: updatedUser.first_name,
       lastName: updatedUser.last_name,
     }));
+  }
+
+  async function handleDeleteAccount(password: string) {
+    await deleteAccount(password);
+    await logout();
   }
 
   if (!isLoggedIn) {
@@ -595,6 +602,7 @@ export default function ProfilePage() {
             setAccountSettingsPanel(null);
           }}
           onSaveName={handleSaveAccountName}
+          onDeleteAccount={handleDeleteAccount}
         />
       )}
     </div>
@@ -608,6 +616,7 @@ function AccountSettingsModal({
   onBack,
   onClose,
   onSaveName,
+  onDeleteAccount,
 }: {
   panel: AccountSettingsPanel | null;
   draft: ProfileDraft;
@@ -615,6 +624,7 @@ function AccountSettingsModal({
   onBack: () => void;
   onClose: () => void;
   onSaveName: SaveAccountName;
+  onDeleteAccount: (password: string) => Promise<void>;
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
@@ -652,11 +662,6 @@ function AccountSettingsModal({
                 onClick={() => onSelectPanel("password")}
               />
               <AccountSettingsOption
-                title="Сбросить пароль"
-                description="Отправка письма со ссылкой для восстановления."
-                onClick={() => onSelectPanel("reset-password")}
-              />
-              <AccountSettingsOption
                 title="Удалить аккаунт"
                 description="Запрос на удаление учетной записи."
                 danger
@@ -678,46 +683,14 @@ function AccountSettingsModal({
           )}
 
           {panel === "password" && (
-            <AccountSettingsForm
-              title="Изменить пароль"
-              actionLabel="Подтвердить"
-              onBack={onBack}
-            >
-              <FormField label="Текущий пароль" type="password" />
-              <FormField label="Новый пароль" type="password" />
-              <FormField label="Повторите новый пароль" type="password" />
-            </AccountSettingsForm>
-          )}
-
-          {panel === "reset-password" && (
-            <AccountSettingsForm
-              title="Сбросить пароль"
-              actionLabel="Подтвердить"
-              onBack={onBack}
-            >
-              <FormField
-                label="Почта для восстановления"
-                defaultValue={draft.email}
-                readOnly
-              />
-              <p className="text-xs leading-5 text-muted-foreground">
-                Вам будет отправлено письмо со ссылкой для сброса пароля.
-              </p>
-            </AccountSettingsForm>
+            <PasswordSettingsForm onBack={onBack} />
           )}
 
           {panel === "delete" && (
-            <AccountSettingsForm
-              title="Удалить аккаунт"
-              actionLabel="Подтвердить"
+            <DeleteAccountSettingsForm
               onBack={onBack}
-              danger
-            >
-              <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-3 text-sm leading-6 text-red-800">
-                Вам будет отправлено письмо со ссылкой для подтверждения.
-              </p>
-              <FormField label="Пароль" type="password" />
-            </AccountSettingsForm>
+              onDeleteAccount={onDeleteAccount}
+            />
           )}
         </div>
       </div>
@@ -948,37 +921,190 @@ function EmailSettingsForm({
   );
 }
 
-function AccountSettingsForm({
-  title,
-  children,
-  actionLabel,
-  danger = false,
+function PasswordSettingsForm({ onBack }: { onBack: () => void }) {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [newPasswordConfirm, setNewPasswordConfirm] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsSaving(true);
+    setMessage(null);
+    setError(null);
+
+    try {
+      await changePassword(currentPassword, newPassword, newPasswordConfirm);
+      setCurrentPassword("");
+      setNewPassword("");
+      setNewPasswordConfirm("");
+      setMessage("Пароль изменён.");
+    } catch (caughtError) {
+      setError(getApiErrorMessage(caughtError, "Не удалось изменить пароль."));
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <AccountSettingsBackButton onBack={onBack} />
+      <h4 className="text-lg font-black">Изменить пароль</h4>
+      <div className="mt-4 grid gap-4">
+        <label className="grid gap-2">
+          <span className="text-sm font-bold">Текущий пароль</span>
+          <input
+            type="password"
+            value={currentPassword}
+            onChange={(event) => setCurrentPassword(event.target.value)}
+            required
+            autoComplete="current-password"
+            className={getEditableFieldClassName()}
+          />
+        </label>
+
+        <label className="grid gap-2">
+          <span className="text-sm font-bold">Новый пароль</span>
+          <input
+            type="password"
+            value={newPassword}
+            onChange={(event) => setNewPassword(event.target.value)}
+            required
+            minLength={8}
+            autoComplete="new-password"
+            className={getEditableFieldClassName()}
+          />
+        </label>
+
+        <label className="grid gap-2">
+          <span className="text-sm font-bold">Повторите новый пароль</span>
+          <input
+            type="password"
+            value={newPasswordConfirm}
+            onChange={(event) => setNewPasswordConfirm(event.target.value)}
+            required
+            minLength={8}
+            autoComplete="new-password"
+            className={getEditableFieldClassName()}
+          />
+        </label>
+      </div>
+
+      <AccountSettingsFeedback message={message} error={error} />
+
+      <button
+        type="submit"
+        disabled={
+          isSaving ||
+          !currentPassword ||
+          !newPassword ||
+          !newPasswordConfirm
+        }
+        className={["mt-5", getSecondaryButtonClassName()].join(" ")}
+      >
+        {isSaving ? "Сохранение…" : "Подтвердить"}
+      </button>
+    </form>
+  );
+}
+
+function DeleteAccountSettingsForm({
   onBack,
+  onDeleteAccount,
 }: {
-  title: string;
-  children: ReactNode;
-  actionLabel: string;
-  danger?: boolean;
   onBack: () => void;
+  onDeleteAccount: (password: string) => Promise<void>;
+}) {
+  const [password, setPassword] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsSaving(true);
+    setError(null);
+
+    try {
+      await onDeleteAccount(password);
+    } catch (caughtError) {
+      setError(getApiErrorMessage(caughtError, "Не удалось удалить аккаунт."));
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <AccountSettingsBackButton onBack={onBack} />
+      <h4 className="text-lg font-black">Удалить аккаунт</h4>
+      <div className="mt-4 grid gap-4">
+        <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-3 text-sm leading-6 text-red-800">
+          После подтверждения аккаунт будет деактивирован, а профиль скрыт из каталога.
+        </p>
+
+        <label className="grid gap-2">
+          <span className="text-sm font-bold">Пароль</span>
+          <input
+            type="password"
+            value={password}
+            onChange={(event) => {
+              setPassword(event.target.value);
+              setError(null);
+            }}
+            required
+            autoComplete="current-password"
+            className={getEditableFieldClassName()}
+          />
+        </label>
+      </div>
+
+      <AccountSettingsFeedback message={null} error={error} />
+
+      <button
+        type="submit"
+        disabled={isSaving || !password}
+        className={["mt-5", getSecondaryButtonClassName(true)].join(" ")}
+      >
+        {isSaving ? "Удаление…" : "Подтвердить"}
+      </button>
+    </form>
+  );
+}
+
+function AccountSettingsBackButton({ onBack }: { onBack: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onBack}
+      className="mb-4 text-sm font-bold text-muted-foreground hover:text-foreground"
+    >
+      ← Назад
+    </button>
+  );
+}
+
+function AccountSettingsFeedback({
+  message,
+  error,
+}: {
+  message: string | null;
+  error: string | null;
 }) {
   return (
-    <div>
-      <button
-        type="button"
-        onClick={onBack}
-        className="mb-4 text-sm font-bold text-muted-foreground hover:text-foreground"
-      >
-        ← Назад
-      </button>
-      <h4 className="text-lg font-black">{title}</h4>
-      <div className="mt-4 grid gap-4">{children}</div>
-      <button
-        type="button"
-        className={["mt-5", getSecondaryButtonClassName(danger)].join(" ")}
-      >
-        {actionLabel}
-      </button>
-    </div>
+    <>
+      {error && (
+        <p className="mt-4 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {error}
+        </p>
+      )}
+
+      {message && (
+        <p className="mt-4 rounded-xl bg-emerald-100 px-3 py-2 text-sm font-bold text-emerald-800">
+          {message}
+        </p>
+      )}
+    </>
   );
 }
 
@@ -1016,6 +1142,17 @@ function isFilled(value: string | undefined) {
 
 function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function getApiErrorMessage(error: unknown, fallback: string) {
+  if (!(error instanceof ApiError)) return fallback;
+
+  return (
+    [
+      ...error.generalErrors,
+      ...Object.values(error.fieldErrors).flat(),
+    ].join(" ") || error.message
+  );
 }
 
 function getReadOnlyAccountFieldClassName() {

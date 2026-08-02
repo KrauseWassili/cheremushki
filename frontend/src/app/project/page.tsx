@@ -84,9 +84,9 @@ export default function AboutPage() {
         </p>
 
         <p className="section-block__text">
-          Юридическая информация об ответственном за сайт приведена в{" "}
-          <a href="/impressum" className="underline">
-            Impressum
+          Юридическая информация об ответственном за сайт приведена в разделе{" "}
+          <a href="/legal" className="underline">
+            правовой информации
           </a>
           .
         </p>

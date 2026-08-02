@@ -3,6 +3,7 @@
 import {FormEvent, useEffect, useState} from "react";
 import {Loader2, X} from "lucide-react";
 import {ApiError, type ApiFieldErrors} from "@/lib/api";
+import {requestPasswordReset} from "@/lib/auth";
 
 interface LoginModalProps {
     initialMode?: "login" | "register";
@@ -43,17 +44,26 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
     const [regPassword, setRegPassword] = useState("");
     const [regPasswordConfirm, setRegPasswordConfirm] = useState("");
 
-    const [mode, setMode] = useState<"login" | "register">(initialMode);
+    const [resetEmail, setResetEmail] = useState("");
+    const [resetError, setResetError] = useState<string | null>(null);
+    const [resetSuccess, setResetSuccess] = useState<string | null>(null);
+
+    const [mode, setMode] = useState<"login" | "register" | "reset-password">(initialMode);
 
     useEffect(() => {
         setMode(initialMode);
     }, [initialMode]);
 
-    const switchMode = (nextMode: "login" | "register") => {
+    const switchMode = (nextMode: "login" | "register" | "reset-password") => {
         setMode(nextMode);
         setLoginError(null);
         setRegisterErrors(emptyRegisterErrors);
         setRegisterSuccess(null);
+        setResetError(null);
+        setResetSuccess(null);
+        if (nextMode === "reset-password") {
+            setResetEmail(email);
+        }
     };
 
     const handleSubmit = async (event: FormEvent) => {
@@ -68,7 +78,7 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                 err instanceof ApiError
                     ? [...err.generalErrors, ...Object.values(err.fieldErrors).flat()].join(" ") ||
                     err.message
-                    : "Anmeldung fehlgeschlagen. Bitte versuchen Sie es erneut.";
+                    : "Не удалось войти. Попробуйте ещё раз.";
             setLoginError(message);
         } finally {
             setIsSubmitting(false);
@@ -102,10 +112,31 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                 });
             } else {
                 setRegisterErrors({
-                    general: ["Registrierung fehlgeschlagen. Bitte versuchen Sie es erneut."],
+                    general: ["Не удалось зарегистрироваться. Попробуйте ещё раз."],
                     fields: {},
                 });
             }
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    const handlePasswordReset = async (event: FormEvent) => {
+        event.preventDefault();
+        setResetError(null);
+        setResetSuccess(null);
+        setIsSubmitting(true);
+
+        try {
+            await requestPasswordReset(resetEmail.trim());
+            setResetSuccess("Письмо со ссылкой для сброса пароля отправлено.");
+        } catch (err) {
+            const message =
+                err instanceof ApiError
+                    ? [...err.generalErrors, ...Object.values(err.fieldErrors).flat()].join(" ") ||
+                    err.message
+                    : "Не удалось отправить письмо для сброса пароля.";
+            setResetError(message);
         } finally {
             setIsSubmitting(false);
         }
@@ -188,9 +219,13 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                                     />
                                     Запомнить меня
                                 </label>
-                                <a href="#" className="text-accent hover:underline">
+                                <button
+                                    type="button"
+                                    onClick={() => switchMode("reset-password")}
+                                    className="text-accent hover:underline"
+                                >
                                     Забыли пароль?
-                                </a>
+                                </button>
                             </div>
 
                             {loginError && (
@@ -225,6 +260,81 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                             </p>
                         </form>
                     )}
+                    {mode === "reset-password" && (
+                        <form onSubmit={handlePasswordReset} className="p-6 space-y-4">
+                            <div>
+                                <h3 className="text-lg font-black text-foreground">
+                                    Сброс пароля
+                                </h3>
+                                <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                                    Укажите почту аккаунта, и мы отправим ссылку для восстановления.
+                                </p>
+                            </div>
+
+                            <div>
+                                <label
+                                    htmlFor="reset-email"
+                                    className="text-foreground text-sm font-semibold block mb-1.5"
+                                >
+                                    Электронная почта
+                                </label>
+                                <input
+                                    id="reset-email"
+                                    type="email"
+                                    value={resetEmail}
+                                    onChange={(e) => {
+                                        setResetEmail(e.target.value);
+                                        setResetError(null);
+                                        setResetSuccess(null);
+                                    }}
+                                    required
+                                    autoComplete="email"
+                                    disabled={isSubmitting}
+                                    className="w-full px-3 py-2.5 bg-input-background border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60"
+                                />
+                            </div>
+
+                            {resetError && (
+                                <div
+                                    className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg text-xs text-destructive">
+                                    {resetError}
+                                </div>
+                            )}
+
+                            {resetSuccess && (
+                                <div className="p-3 bg-emerald-100 rounded-lg text-xs font-semibold text-emerald-800">
+                                    {resetSuccess}
+                                </div>
+                            )}
+
+                            <button
+                                type="submit"
+                                disabled={isSubmitting || !resetEmail.trim()}
+                                className="button-gray-rounded w-full py-3 flex items-center justify-center gap-2"
+                                style={{fontFamily: "var(--font-display)"}}
+                            >
+                                {isSubmitting ? (
+                                    <>
+                                        <Loader2 size={16} className="animate-spin"/>
+                                        Подождите…
+                                    </>
+                                ) : (
+                                    "Отправить ссылку"
+                                )}
+                            </button>
+
+                            <p className="text-center text-muted-foreground text-xs">
+                                Вспомнили пароль?{" "}
+                                <button
+                                    type="button"
+                                    onClick={() => switchMode("login")}
+                                    className="text-accent font-semibold hover:underline"
+                                >
+                                    Войти
+                                </button>
+                            </p>
+                        </form>
+                    )}
                     {mode === "register" && (
                         <form onSubmit={handleRegister} className="p-6 space-y-4">
                             {registerSuccess ? (
@@ -237,7 +347,7 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                                         onClick={() => switchMode("login")}
                                         className="button-gray-rounded w-full py-3"
                                     >
-                                        Zum Login
+                                        Перейти ко входу
                                     </button>
                                 </div>
                             ) : (
@@ -341,9 +451,10 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                             </div>
                             <div className="flex items-center justify-between text-xs">
                                 <p className="text-muted-foreground text-xs text-center">
-                                    Регистрируясь вы подтверждаете наши условия пользования{" "}
-                                    <a href="#" className="text-accent hover:underline">AGB</a> und{" "}
-                                    <a href="#" className="text-accent hover:underline">Datenschutzerklärung</a>.
+                                    Регистрируясь, вы соглашаетесь с{" "}
+                                    <a href="/rules" className="text-accent hover:underline">правилами</a>{" "}
+                                    и{" "}
+                                    <a href="/privacy" className="text-accent hover:underline">политикой конфиденциальности</a>.
                                 </p>
                             </div>
 

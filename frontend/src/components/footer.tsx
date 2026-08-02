@@ -5,7 +5,7 @@ export default function Footer() {
     <footer className="fixed left-0 bottom-0 w-full bg-dark text-lightest py-3">
       <div className="mx-auto flex justify-center px-4 gap-8">
         <span className="opacity-80">
-          Cheremushki © 2026. All rights reserved.
+          Cheremushki © 2026. Все права защищены.
         </span>
         <div className="flex items-center gap-4">
           <Link href="/rules">Правила</Link>

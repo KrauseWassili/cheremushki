@@ -97,7 +97,7 @@ export async function logoutRequest(): Promise<void> {
       access,
     );
   } catch {
-    // Token ggf. schon ungültig — lokal trotzdem abmelden
+    // Токен уже может быть недействительным, но локально всё равно выходим.
   }
 }
 
@@ -132,7 +132,7 @@ export async function fetchCurrentUser(
 ): Promise<User> {
   const token = accessToken ?? getAccessToken();
   if (!token) {
-    throw new Error("Nicht angemeldet");
+    throw new Error("Пользователь не авторизован");
   }
 
   try {
@@ -157,7 +157,7 @@ export async function updateCurrentUser(
 ): Promise<User> {
   const token = getAccessToken();
   if (!token) {
-    throw new Error("Nicht angemeldet");
+    throw new Error("Пользователь не авторизован");
   }
 
   try {
@@ -189,20 +189,24 @@ export async function changePassword(
   newPasswordConfirm: string,
 ): Promise<void> {
   const token = getAccessToken();
-  if (!token) throw new Error("Nicht angemeldet");
+  if (!token) throw new Error("Пользователь не авторизован");
 
-  await apiFetch(
-    "/api/v1/accounts/password/change/",
-    {
-      method: "POST",
-      body: JSON.stringify({
-        current_password: currentPassword,
-        new_password: newPassword,
-        new_password_confirm: newPasswordConfirm,
-      }),
-    },
-    token,
-  );
+  const options = {
+    method: "POST",
+    body: JSON.stringify({
+      current_password: currentPassword,
+      new_password: newPassword,
+      new_password_confirm: newPasswordConfirm,
+    }),
+  };
+
+  try {
+    await apiFetch("/api/v1/accounts/password/change/", options, token);
+  } catch (error) {
+    const refreshed = await refreshAccessToken();
+    if (!refreshed) throw error;
+    await apiFetch("/api/v1/accounts/password/change/", options, refreshed);
+  }
 }
 
 export async function requestPasswordReset(email: string): Promise<void> {
@@ -231,14 +235,18 @@ export async function confirmPasswordReset(
 
 export async function deleteAccount(password: string): Promise<void> {
   const token = getAccessToken();
-  if (!token) throw new Error("Nicht angemeldet");
+  if (!token) throw new Error("Пользователь не авторизован");
 
-  await apiFetch(
-    "/api/v1/accounts/delete/",
-    {
-      method: "POST",
-      body: JSON.stringify({ password }),
-    },
-    token,
-  );
+  const options = {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  };
+
+  try {
+    await apiFetch("/api/v1/accounts/delete/", options, token);
+  } catch (error) {
+    const refreshed = await refreshAccessToken();
+    if (!refreshed) throw error;
+    await apiFetch("/api/v1/accounts/delete/", options, refreshed);
+  }
 }

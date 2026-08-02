@@ -50,7 +50,7 @@ async function authedFetch<T>(
   options: RequestInit = {},
 ): Promise<T> {
   const token = getAccessToken();
-  if (!token) throw new Error("Nicht angemeldet");
+  if (!token) throw new Error("Пользователь не авторизован");
 
   try {
     return await apiFetch<T>(path, options, token);
@@ -191,7 +191,7 @@ export async function uploadMyAvatar(
   original?: Blob | null,
 ): Promise<ApiMemberProfile> {
   const token = getAccessToken();
-  if (!token) throw new Error("Nicht angemeldet");
+  if (!token) throw new Error("Пользователь не авторизован");
 
   const form = new FormData();
   form.append("avatar", file, "avatar.jpg");

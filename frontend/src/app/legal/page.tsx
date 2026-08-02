@@ -6,22 +6,22 @@ export default function ContactPage() {
       <header className="mx-auto mb-10 max-w-3xl text-center">
         <h1 className="mt-3 text-4xl font-black tracking-tight sm:text-5xl">Правовая информация</h1>
 
-        <p className="section-block__text">Angaben gemäß § 5 DDG</p>
+        <p className="section-block__text">Сведения согласно § 5 DDG</p>
       </header>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">Verantwortlich</h2>
+        <h2 className="section-block__title font-black">Ответственный</h2>
 
         <address className="section-block__text not-italic">
-          [VORNAME NACHNAME]
+          [ИМЯ И ФАМИЛИЯ]
           <br />
-          Privater Betreiber des Community-Projekts „Черёмушки“
+          Частный организатор проекта сообщества «Черёмушки»
           <br />
-          [STRASSE UND HAUSNUMMER]
+          [УЛИЦА И НОМЕР ДОМА]
           <br />
-          [POSTLEITZAHL UND ORT]
+          [ИНДЕКС И ГОРОД]
           <br />
-          Deutschland
+          Германия
         </address>
       </section>
 
@@ -29,7 +29,7 @@ export default function ContactPage() {
         <h2 className="section-block__title font-black">Kontakt</h2>
 
         <p className="section-block__text">
-          E-Mail:{" "}
+          Почта:{" "}
           <a href="mailto:[EMAIL]" className="underline">
             [EMAIL]
           </a>
