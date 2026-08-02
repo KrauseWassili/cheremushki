@@ -56,7 +56,7 @@ export default function MemberPage() {
 
   if (authLoading || loading) {
     return (
-      <main className="mx-auto w-full max-w-4xl px-4 py-16 text-center text-muted-foreground">
+      <main className="mx-auto w-full max-w-3xl py-16 text-center text-muted-foreground">
         Загрузка…
       </main>
     );
@@ -64,7 +64,7 @@ export default function MemberPage() {
 
   if (!isLoggedIn) {
     return (
-      <main className="mx-auto w-full max-w-lg px-4 py-16 text-center">
+      <main className="mx-auto w-full max-w-lg py-16 text-center">
         <p className="text-muted-foreground">
           Войдите, чтобы открыть профиль участника.
         </p>
@@ -80,7 +80,7 @@ export default function MemberPage() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-4xl px-4 py-4 sm:px-6 sm:py-6">
+    <main className="mx-auto w-full max-w-3xl py-4">
       <Link
         href="/members"
         className="mb-7 inline-flex text-sm font-bold text-muted-foreground hover:text-foreground"

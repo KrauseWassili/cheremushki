@@ -82,11 +82,11 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
   }
 
   return (
-    <div className="grid gap-8 lg:grid-cols-[260px_minmax(0,760px)] lg:items-start lg:justify-center">
-      <aside className="rounded-3xl border border-border bg-background p-5 lg:sticky lg:top-6">
+    <div className="grid gap-8 min-[1100px]:ml-[-292px] min-[1100px]:w-[calc(100%+292px)] min-[1100px]:grid-cols-[260px_minmax(0,1fr)] min-[1100px]:items-start">
+      <aside className="rounded-3xl border border-border bg-background p-5 shadow-sm min-[1100px]:sticky min-[1100px]:top-6">
         <h3 className="font-black">Фильтры</h3>
 
-        <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
+        <div className="mt-5 grid gap-4 min-[1100px]:grid-cols-1">
           <MemberFilterSelect
             id="filter-city"
             label="Город"
@@ -109,7 +109,7 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
             <button
               type="button"
               onClick={resetFilters}
-              className="rounded-xl border border-border px-4 py-2 text-sm font-bold hover:bg-muted sm:col-span-2 lg:col-span-1"
+              className="rounded-xl border border-border px-4 py-2 text-sm font-bold hover:bg-muted"
             >
               Очистить фильтры
             </button>
@@ -129,7 +129,7 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Имя, профессия, компания, навык или ключевое слово"
-            className="h-14 w-full rounded-2xl border border-border bg-background px-5 text-base outline-none transition placeholder:text-muted-foreground focus:border-foreground/40 focus:ring-4 focus:ring-foreground/5"
+            className="h-14 w-full rounded-2xl border border-border bg-input-background px-5 text-base shadow-inner outline-none transition placeholder:text-muted-foreground focus:border-foreground/40 focus:ring-4 focus:ring-foreground/5"
           />
 
           <p className="mt-3 text-sm text-muted-foreground">

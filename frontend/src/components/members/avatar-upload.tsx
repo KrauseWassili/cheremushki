@@ -241,8 +241,8 @@ export function AvatarUpload({
             className={[
               "rounded-full px-2 py-0.5 text-[11px] font-bold",
               value
-                ? "bg-emerald-100 text-emerald-800"
-                : "bg-amber-100 text-amber-800",
+                ? "bg-success-soft text-success"
+                : "bg-warning-soft text-warning",
             ].join(" ")}
           >
             {value ? "Заполнено" : "Обязательно"}
@@ -250,14 +250,14 @@ export function AvatarUpload({
         )}
       </p>
 
-      <div className="mt-3 flex flex-col gap-5 sm:flex-row sm:items-center">
+      <div className="mt-3 flex flex-col gap-5 min-[900px]:flex-row min-[900px]:items-center">
         {value ? (
           <img
             src={value}
             alt={`Аватар ${fullName}`}
             className={[
               "size-28 rounded-2xl border object-cover",
-              required ? "border-emerald-300" : "border-border",
+              required ? "border-success" : "border-border",
             ].join(" ")}
           />
         ) : (
@@ -265,7 +265,7 @@ export function AvatarUpload({
             className={[
               "flex size-28 items-center justify-center rounded-2xl border bg-muted text-3xl font-black",
               required
-                ? "border-amber-300 bg-amber-50/30"
+                ? "border-warning bg-warning-soft/30"
                 : "border-border",
             ].join(" ")}
           >
@@ -289,7 +289,7 @@ export function AvatarUpload({
               onClick={() => inputRef.current?.click()}
               className="rounded-xl border border-border px-4 py-2.5 text-sm font-bold hover:bg-muted"
             >
-              {value ? "Заменить фотографию" : "Загрузить фотографию"}
+              {value ? "Заменить" : "Загрузить"}
             </button>
 
             {value && (
@@ -305,7 +305,7 @@ export function AvatarUpload({
                 <button
                   type="button"
                   onClick={handleRemove}
-                  className="rounded-xl px-4 py-2.5 text-sm font-bold text-red-700 hover:bg-red-50"
+                  className="rounded-xl border border-border px-4 py-2.5 text-sm font-bold text-destructive hover:bg-danger-soft"
                 >
                   Удалить
                 </button>
@@ -313,20 +313,20 @@ export function AvatarUpload({
             )}
           </div>
 
-          <p className="mt-3 text-xs text-muted-foreground">
-            JPG, PNG или WebP. Не более 5 МБ.
-          </p>
-
           {error && (
-            <p role="alert" className="mt-2 text-sm text-red-700">
+            <p role="alert" className="mt-2 text-sm text-destructive">
               {error}
             </p>
           )}
         </div>
       </div>
 
+      <p className="mt-3 text-xs text-muted-foreground">
+        JPG, PNG или WebP. Не более 5 МБ.
+      </p>
+
       {cropSource && isCropOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4 backdrop-blur-sm">
           <div className="w-full max-w-xl rounded-2xl border border-border bg-bg p-6 shadow-2xl">
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -335,7 +335,7 @@ export function AvatarUpload({
                   Фото вписано в квадрат. Передвиньте рамку или потяните угол.
                 </p>
                 {!sourceValue && !localSourceValue && (
-                  <p className="mt-2 text-xs font-bold text-amber-700">
+                  <p className="mt-2 text-xs font-bold text-warning">
                     Для старой аватарки доступен только текущий сохранённый кадр.
                     Загрузите фото заново, чтобы кадрировать исходник.
                   </p>
@@ -378,11 +378,11 @@ export function AvatarUpload({
                   style={{
                     ...getFrameStyle(draftCrop, imageSize),
                   }}
-                  className="absolute cursor-move border-2 border-white bg-transparent shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]"
+                  className="absolute cursor-move border-2 border-crop-frame bg-transparent shadow-[0_0_0_9999px_var(--color-crop-mask)]"
                 >
                   <div className="pointer-events-none absolute inset-0 grid grid-cols-3 grid-rows-3">
                     {Array.from({ length: 9 }).map((_, index) => (
-                      <div key={index} className="border border-white/35" />
+                      <div key={index} className="border border-crop-frame/35" />
                     ))}
                   </div>
 
@@ -394,7 +394,7 @@ export function AvatarUpload({
                     onPointerMove={handleFramePointerMove}
                     onPointerUp={handleFramePointerEnd}
                     onPointerCancel={handleFramePointerEnd}
-                    className="absolute -bottom-2 -right-2 size-5 cursor-nwse-resize rounded-full border-2 border-white bg-foreground"
+                    className="absolute -bottom-2 -right-2 size-5 cursor-nwse-resize rounded-full border-2 border-crop-frame bg-foreground"
                   />
                 </div>
               </div>

@@ -51,7 +51,7 @@ export default function MembersPage() {
 
   if (authLoading || loading) {
     return (
-      <main className="mx-auto w-full max-w-6xl px-4 py-16 text-center text-muted-foreground">
+      <main className="mx-auto w-full max-w-3xl py-16 text-center text-muted-foreground">
         Загрузка…
       </main>
     );
@@ -59,7 +59,7 @@ export default function MembersPage() {
 
   if (!isLoggedIn) {
     return (
-      <main className="mx-auto w-full max-w-lg px-4 py-16 text-center">
+      <main className="mx-auto w-full max-w-lg py-16 text-center">
         <h1 className="text-3xl font-black">Участники</h1>
         <p className="mt-4 text-muted-foreground">
           Войдите в аккаунт, чтобы видеть каталог участников.
@@ -76,12 +76,12 @@ export default function MembersPage() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-6xl px-4 py-4 sm:px-6 sm:py-6">
+    <main className="mx-auto w-full max-w-3xl py-4">
       <header className="mx-auto mb-10 max-w-3xl text-center">
-        <h1 className="mt-3 text-4xl font-black tracking-tight sm:text-5xl">
+        <h1 className="mt-3 text-4xl font-black tracking-tight">
           Участники
         </h1>
-        <p className="mt-5 text-base leading-7 text-muted-foreground sm:text-lg">
+        <p className="mt-5 text-base leading-7 text-muted-foreground">
           Наше сообщество — это потенциал, сложенный из опыта, знаний и
           возможностей каждого из нас. Вместе мы находим решения, воплощаем идеи
           и открываем друг другу новые пути. Найди тех, с кем хочется говорить,

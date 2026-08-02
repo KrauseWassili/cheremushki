@@ -1,10 +1,16 @@
-import { apiFetch } from "@/lib/api";
+import { ApiError, apiFetch } from "@/lib/api";
 import type { RegisterResponse, TokenPair, User } from "@/types/user";
 
 const ACCESS_TOKEN_KEY = "access_token";
 const REFRESH_TOKEN_KEY = "refresh_token";
 
 type StorageKind = "local" | "session";
+
+let refreshRequest: Promise<string | null> | null = null;
+
+export function isAuthError(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.status === 401;
+}
 
 function getStorage(kind: StorageKind): Storage {
   return kind === "local" ? localStorage : sessionStorage;
@@ -102,6 +108,16 @@ export async function logoutRequest(): Promise<void> {
 }
 
 export async function refreshAccessToken(): Promise<string | null> {
+  if (refreshRequest) return refreshRequest;
+
+  refreshRequest = refreshAccessTokenOnce().finally(() => {
+    refreshRequest = null;
+  });
+
+  return refreshRequest;
+}
+
+async function refreshAccessTokenOnce(): Promise<string | null> {
   const refresh = getRefreshToken();
   const storage = getActiveStorage();
   if (!refresh || !storage) return null;
@@ -122,7 +138,9 @@ export async function refreshAccessToken(): Promise<string | null> {
 
     return data.access;
   } catch {
-    clearTokens();
+    if (getRefreshToken() === refresh) {
+      clearTokens();
+    }
     return null;
   }
 }
@@ -142,6 +160,7 @@ export async function fetchCurrentUser(
       token,
     );
   } catch (error) {
+    if (!isAuthError(error)) throw error;
     const refreshed = await refreshAccessToken();
     if (!refreshed) throw error;
     return apiFetch<User>(
@@ -170,6 +189,7 @@ export async function updateCurrentUser(
       token,
     );
   } catch (error) {
+    if (!isAuthError(error)) throw error;
     const refreshed = await refreshAccessToken();
     if (!refreshed) throw error;
     return apiFetch<User>(
@@ -203,6 +223,7 @@ export async function changePassword(
   try {
     await apiFetch("/api/v1/accounts/password/change/", options, token);
   } catch (error) {
+    if (!isAuthError(error)) throw error;
     const refreshed = await refreshAccessToken();
     if (!refreshed) throw error;
     await apiFetch("/api/v1/accounts/password/change/", options, refreshed);
@@ -245,6 +266,7 @@ export async function deleteAccount(password: string): Promise<void> {
   try {
     await apiFetch("/api/v1/accounts/delete/", options, token);
   } catch (error) {
+    if (!isAuthError(error)) throw error;
     const refreshed = await refreshAccessToken();
     if (!refreshed) throw error;
     await apiFetch("/api/v1/accounts/delete/", options, refreshed);

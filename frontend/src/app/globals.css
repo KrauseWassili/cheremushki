@@ -1,20 +1,127 @@
 @import "tailwindcss";
-@custom-variant dark (&:where(.dark, .dark *));
-
 :root {
-  --color-darkest: #0a0f1a;
-  --color-dark: #0f2433;
-  --color-mid-dark: #4f6b81;
-  --color-mid: #9db1c1;
-  --color-light: #c7d4df;
-  --color-lightest: #dde5ec;
+  --palette-ink: #18202a;
+  --palette-forest: #173f43;
+  --palette-teal: #2f6f73;
+  --palette-mint: #8fc7b5;
+  --palette-coral: #d94f45;
+  --palette-honey: #d99a2b;
+  --palette-paper: #f7f3ea;
+  --palette-surface: #fcf8f2;
+  --palette-linen: #efe6d8;
+  --palette-stone: #d9cbb8;
+  --palette-muted: #6d6258;
+  --palette-sky: #c7d4df;
 
-  --color-bg: var(--color-lightest);
-  --color-bg-secondary: var(--color-light);
-  --color-text: var(--color-darkest);
-  --color-text-secondary: var(--color-mid-dark);
-  --color-primary: var(--color-mid-dark);
-  --color-primary-hover: var(--color-dark);
+  --color-ink: var(--palette-ink);
+  --color-paper: var(--palette-paper);
+  --color-surface: var(--palette-surface);
+  --color-surface-muted: var(--palette-linen);
+  --color-primary: var(--palette-teal);
+  --color-primary-hover: color-mix(in srgb, var(--palette-teal) 72%, var(--palette-ink));
+  --color-accent: var(--palette-coral);
+  --color-accent-soft: color-mix(in srgb, var(--palette-coral) 18%, var(--palette-surface));
+  --color-mint: var(--palette-mint);
+  --color-muted: var(--palette-stone);
+  --color-muted-text: var(--palette-muted);
+  --color-border: var(--palette-stone);
+  --color-danger: color-mix(in srgb, var(--palette-coral) 70%, var(--palette-ink));
+  --color-danger-soft: color-mix(in srgb, var(--palette-coral) 18%, var(--palette-surface));
+  --color-success: color-mix(in srgb, var(--palette-teal) 78%, var(--palette-ink));
+  --color-success-soft: color-mix(in srgb, var(--palette-mint) 35%, var(--palette-surface));
+  --color-warning: color-mix(in srgb, var(--palette-honey) 72%, var(--palette-ink));
+  --color-warning-soft: color-mix(in srgb, var(--palette-honey) 24%, var(--palette-surface));
+  --color-heading: var(--palette-forest);
+  --color-body: color-mix(in srgb, var(--palette-ink) 88%, var(--palette-teal));
+  --color-link: color-mix(in srgb, var(--palette-coral) 88%, var(--palette-ink));
+  --color-link-hover: var(--color-danger);
+  --color-emphasis: color-mix(in srgb, var(--palette-honey) 58%, var(--palette-coral));
+  --color-header-bg: var(--palette-forest);
+  --color-header-link: var(--palette-sky);
+  --color-header-link-hover: color-mix(in srgb, var(--palette-sky) 58%, var(--palette-surface));
+  --color-header-active-bg: color-mix(in srgb, var(--palette-sky) 72%, transparent);
+  --color-header-active-text: var(--palette-forest);
+  --color-header-hover-bg: color-mix(in srgb, var(--palette-sky) 14%, transparent);
+  --color-overlay: color-mix(in srgb, var(--palette-ink) 52%, transparent);
+  --color-crop-frame: var(--palette-surface);
+  --color-crop-mask: color-mix(in srgb, var(--palette-ink) 35%, transparent);
+
+  --color-bg: var(--color-paper);
+  --color-text: var(--color-body);
+  --font-body: "Golos Text Variable", "Segoe UI", Roboto, Arial, sans-serif;
+  --font-display: "Golos Text Variable", "Segoe UI", Roboto, Arial, sans-serif;
+  --font-code: "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+@theme inline {
+  --color-ink: var(--color-ink);
+  --color-paper: var(--color-paper);
+  --color-surface: var(--color-surface);
+  --color-surface-muted: var(--color-surface-muted);
+  --color-accent: var(--color-accent);
+  --color-accent-soft: var(--color-accent-soft);
+  --color-mint: var(--color-mint);
+  --color-muted-text: var(--color-muted-text);
+  --color-danger: var(--color-danger);
+  --color-danger-soft: var(--color-danger-soft);
+  --color-success: var(--color-success);
+  --color-success-soft: var(--color-success-soft);
+  --color-warning: var(--color-warning);
+  --color-warning-soft: var(--color-warning-soft);
+  --color-heading: var(--color-heading);
+  --color-body: var(--color-body);
+  --color-link: var(--color-link);
+  --color-link-hover: var(--color-link-hover);
+  --color-emphasis: var(--color-emphasis);
+  --color-header-bg: var(--color-header-bg);
+  --color-header-link: var(--color-header-link);
+  --color-header-link-hover: var(--color-header-link-hover);
+  --color-header-active-bg: var(--color-header-active-bg);
+  --color-header-active-text: var(--color-header-active-text);
+  --color-header-hover-bg: var(--color-header-hover-bg);
+  --color-overlay: var(--color-overlay);
+  --color-crop-frame: var(--color-crop-frame);
+
+  --color-bg: var(--color-bg);
+  --color-text: var(--color-text);
+  --color-primary: var(--color-primary);
+  --color-primary-hover: var(--color-primary-hover);
+  --color-background: var(--color-surface);
+  --color-foreground: var(--color-heading);
+  --color-secondary: var(--color-surface-muted);
+  --color-muted: var(--color-muted);
+  --color-muted-foreground: var(--color-muted-text);
+  --color-border: var(--color-border);
+  --color-input-background: var(--color-surface);
+  --color-destructive: var(--color-danger);
+
+  --font-sans: var(--font-body);
+  --font-mono: var(--font-code);
+}
+
+body {
+  font-family: var(--font-body);
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--color-text);
+}
+
+button:not(:disabled):not([role="option"]):not(.button-flat) {
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--palette-ink) 14%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--palette-surface) 65%, transparent);
+}
+
+button:not(:disabled):not([role="option"]):not(.button-flat):hover {
+  box-shadow:
+    0 4px 10px color-mix(in srgb, var(--palette-ink) 12%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--palette-surface) 75%, transparent);
+}
+
+button:not(:disabled):not([role="option"]):not(.button-flat):active {
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--palette-ink) 10%, transparent),
+    inset 0 1px 2px color-mix(in srgb, var(--palette-ink) 12%, transparent);
 }
 
 .button-gray-rounded {
@@ -22,35 +129,122 @@
   align-items: center;
   gap: 0.5rem;
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-surface);
   border: none;
   padding: 0.5rem 1rem;
   border-radius: 6px;
   cursor: pointer;
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--palette-ink) 14%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--palette-surface) 30%, transparent);
 }
 
 .button-gray-rounded:hover {
   background: var(--color-primary-hover);
+  box-shadow:
+    0 4px 10px color-mix(in srgb, var(--palette-ink) 12%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--palette-surface) 35%, transparent);
 }
 
 .section-block {
-  max-width: 64rem;
+  max-width: 48rem;
   margin: 0 auto;
-  padding: 1rem 1rem;
+  padding: 1.25rem 0;
 }
 
 .section-block__title {
-  font-size: 1.5rem;
+  color: var(--color-heading);
+  font-size: 1.375rem;
   font-weight: 700;
   line-height: 1.2;
-  margin-bottom: 1rem;
+  max-width: 68ch;
+  margin: 0 auto 1rem;
+}
+
+.section-block__subtitle {
+  color: var(--color-primary);
+  font-size: 1.0625rem;
+  line-height: 1.35;
+  max-width: 68ch;
+  margin: 1.5rem auto 0.5rem;
 }
 
 .section-block__text {
-  color: var(--color-darkest);
-  font-size: 1.125rem;
+  color: var(--color-body);
+  font-size: 1rem;
   line-height: 1.8;
-  margin: 0;
+  max-width: 68ch;
+  margin: 0 auto;
+}
+
+.section-block__text em,
+.section-block__list-item em {
+  color: var(--color-emphasis);
+  font-style: italic;
+  font-weight: inherit;
+  margin-inline: 0.08em;
+}
+
+.section-block__text + .section-block__text {
+  margin-top: 0.85rem;
+}
+
+.section-block__list {
+  color: var(--color-body);
+  max-width: 68ch;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.section-block__list-item::marker {
+  color: var(--color-accent);
+}
+
+.home-first-screen {
+  display: flex;
+  min-height: calc(100svh - 3.5rem);
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.home-hero-section {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  padding-top: clamp(1rem, 4svh, 3rem);
+  padding-bottom: clamp(1rem, 3svh, 2rem);
+}
+
+.home-hero-section > div {
+  width: 100%;
+}
+
+.home-intro-teaser {
+  flex: none;
+  padding-top: 0;
+  padding-bottom: calc(7rem + clamp(0.5rem, 1svh, 0.9rem));
+}
+
+.home-intro-teaser .section-block__text {
+  max-width: 68ch;
+}
+
+.home-intro-teaser .section-block__text + .section-block__text {
+  margin-top: 0.425rem;
+}
+
+a {
+  color: var(--color-link);
+  text-decoration-color: color-mix(in srgb, var(--color-link) 45%, transparent);
+  text-underline-offset: 0.18em;
+  transition:
+    color 150ms ease,
+    text-decoration-color 150ms ease;
+}
+
+a:hover {
+  color: var(--color-link-hover);
+  text-decoration-color: currentColor;
 }
 
 h1,
@@ -59,49 +253,84 @@ h3,
 h4,
 h5,
 h6 {
-  color: var(--color-darkest);
+  color: var(--color-heading);
   font-weight: 700;
   line-height: 1.2;
   
 }
 
 h1 {
-  font-size: 2rem;
+  color: var(--color-ink);
+  font-size: 1.875rem;
   margin: 0 0 0.5rem;
 }
 
 h2 {
-  font-size: 1.875rem;
+  color: var(--color-heading);
+  font-size: 1.5rem;
   margin: 0 0 1rem;
 }
 
 h3 {
-  font-size: 1.5rem;
+  color: var(--color-primary);
+  font-size: 1.25rem;
   margin: 0 0 0.5rem;
 }
 h4 {
-  font-size: 1.15rem;
+  color: var(--color-heading);
+  font-size: 1.125rem;
   margin: 0 0 0.5rem;
 }
 p {
+  color: inherit;
   line-height: 1.5;
   margin: 0 0 1rem;
 }
 
-@theme inline {
-  --color-darkest: var(--color-darkest);
-  --color-dark: var(--color-dark);
-  --color-mid-dark: var(--color-mid-dark);
-  --color-mid: var(--color-mid);
-  --color-light: var(--color-light);
-  --color-lightest: var(--color-lightest);
-  --color-bg: var(--color-bg);
-  --color-bg-secondary: var(--color-bg-secondary);
-  --color-text: var(--color-text);
-  --color-text-secondary: var(--color-text-secondary);
-  --color-primary: var(--color-primary);
-  --color-primary-hover: var(--color-primary-hover);
+@media (min-width: 640px) {
+  .section-block__title {
+    font-size: 1.5rem;
+  }
 
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  .section-block__subtitle {
+    font-size: 1.125rem;
+  }
+
+  .section-block__text {
+    font-size: 1.0625rem;
+  }
+
+  h1 {
+    font-size: 2.25rem;
+  }
+
+  h2 {
+    font-size: 1.875rem;
+  }
+
+  h3 {
+    font-size: 1.5rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .home-first-screen {
+    min-height: calc(100svh - 3.5rem);
+  }
+
+  .home-intro-teaser {
+    padding-bottom: calc(4.5rem + clamp(0.5rem, 1svh, 0.9rem));
+  }
+
+  .section-block__title {
+    font-size: 1.75rem;
+  }
+
+  .section-block__text {
+    font-size: 1.125rem;
+  }
+
+  h1 {
+    font-size: 2.5rem;
+  }
 }

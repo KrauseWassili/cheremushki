@@ -1,6 +1,7 @@
-import { apiFetch, getApiBaseUrl } from "@/lib/api";
+import { ApiError, apiFetch, getApiBaseUrl } from "@/lib/api";
 import {
   getAccessToken,
+  isAuthError,
   refreshAccessToken,
 } from "@/lib/auth";
 import type { ContactMode, MemberProfile } from "@/types/member";
@@ -55,6 +56,7 @@ async function authedFetch<T>(
   try {
     return await apiFetch<T>(path, options, token);
   } catch (error) {
+    if (!isAuthError(error)) throw error;
     const refreshed = await refreshAccessToken();
     if (!refreshed) throw error;
     return apiFetch<T>(path, options, refreshed);
@@ -215,10 +217,12 @@ export async function uploadMyAvatar(
     const text = await response.text();
     const data = text ? (JSON.parse(text) as unknown) : null;
     if (!response.ok) {
-      throw new Error(
+      throw new ApiError(
         typeof data === "object" && data && "detail" in data
           ? String((data as { detail: unknown }).detail)
           : response.statusText,
+        response.status,
+        data,
       );
     }
     return data as ApiMemberProfile;
@@ -227,6 +231,7 @@ export async function uploadMyAvatar(
   try {
     return await post(token);
   } catch (error) {
+    if (!isAuthError(error)) throw error;
     const refreshed = await refreshAccessToken();
     if (!refreshed) throw error;
     return post(refreshed);

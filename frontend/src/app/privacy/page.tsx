@@ -6,20 +6,20 @@ import Link from "next/link";
 
 export default function PrivacyPage() {
   return (
-    <main className="mx-auto w-full max-w-6xl px-4 py-4 sm:px-6 sm:py-6">
+    <main className="mx-auto w-full max-w-3xl py-4">
       <header className="mx-auto mb-10 max-w-3xl text-center">
-        <h1 className="mt-3 text-4xl font-black tracking-tight sm:text-5xl">
+        <h1 className="mt-3 text-4xl font-black tracking-tight">
           Политика конфиденциальности
         </h1>
 
         <p className="section-block__text">
-          В этой политике мы объясняем, какие персональные данные обрабатывает
+          В этой политике мы объясняем, какие <em>персональные данные</em> обрабатывает
           сайт клуба «Черёмушки», зачем они необходимы и какими правами обладает
           пользователь.
         </p>
 
         <p className="section-block__text">
-          Мы собираем только те данные, которые нужны для работы сайта,
+          Мы собираем <em>только те данные, которые нужны</em> для работы сайта,
           рассмотрения заявок и организации участия в клубе.
         </p>
 
@@ -163,7 +163,7 @@ export default function PrivacyPage() {
 
         <p className="section-block__text">
           Решение не принимается исключительно автоматизированными средствами и
-          не основывается на автоматическом профилировании.
+          <em>не основывается на автоматическом профилировании</em>.
         </p>
       </section>
 
@@ -171,7 +171,7 @@ export default function PrivacyPage() {
         <h2 className="section-block__title font-black">5. Сроки хранения</h2>
 
         <p className="section-block__text">
-          Мы храним персональные данные не дольше, чем это необходимо для целей,
+          Мы храним персональные данные <em>не дольше, чем это необходимо</em> для целей,
           ради которых они были собраны.
         </p>
 
@@ -257,7 +257,7 @@ export default function PrivacyPage() {
         </h2>
 
         <p className="section-block__text">
-          Мы не продаём персональные данные и не передаём их третьим лицам для
+          Мы <em>не продаём персональные данные</em> и не передаём их третьим лицам для
           их собственной рекламы.
         </p>
 
@@ -291,7 +291,7 @@ export default function PrivacyPage() {
 
         <p className="section-block__text">
           Конкретные механизмы необходимо сверить с действующими договорами
-          Vercel и Supabase перед публикацией этой страницы.
+          фактических поставщиков инфраструктуры перед публикацией этой страницы.
         </p>
       </section>
 
@@ -301,7 +301,7 @@ export default function PrivacyPage() {
         </h2>
 
         <p className="section-block__text">
-          В предусмотренных GDPR случаях пользователь имеет право:
+          В предусмотренных GDPR случаях пользователь имеет <em>право</em>:
         </p>
 
         <ul className="section-block__list list-disc">
@@ -385,7 +385,7 @@ export default function PrivacyPage() {
         <h2 className="section-block__title font-black">12. Защита данных</h2>
 
         <p className="section-block__text">
-          Мы принимаем разумные технические и организационные меры для защиты
+          Мы принимаем <em>разумные технические и организационные меры</em> для защиты
           данных от потери, неправомерного доступа, изменения и раскрытия.
         </p>
 

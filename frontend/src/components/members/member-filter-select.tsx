@@ -1,3 +1,5 @@
+import { CustomSelect } from "@/components/ui/custom-select";
+
 type MemberFilterSelectProps = {
   id: string;
   label: string;
@@ -19,20 +21,16 @@ export function MemberFilterSelect({
     <label htmlFor={id} className="grid gap-2">
       <span className="text-sm font-bold">{label}</span>
 
-      <select
+      <CustomSelect
         id={id}
         value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="h-11 rounded-xl border border-border bg-background pl-3 text-sm outline-none transition focus:border-foreground/40 focus:ring-4 focus:ring-foreground/5"
-      >
-        <option value="">{placeholder}</option>
-
-        {options.map((option) => (
-          <option key={option} value={option}>
-            {option}
-          </option>
-        ))}
-      </select>
+        placeholder={placeholder}
+        onChange={onChange}
+        options={[
+          { value: "", label: placeholder },
+          ...options.map((option) => ({ value: option, label: option })),
+        ]}
+      />
     </label>
   );
 }
