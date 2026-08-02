@@ -70,7 +70,7 @@ export function MemberContactActions({
         </button>
 
         {isRequestOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4 backdrop-blur-sm">
             <div className="w-full max-w-lg rounded-2xl border border-border bg-bg p-6 shadow-2xl">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -99,7 +99,7 @@ export function MemberContactActions({
                     value={requestText}
                     onChange={(event) => setRequestText(event.target.value)}
                     placeholder={`Коротко напишите, зачем хотите связаться с ${member.fullName}`}
-                    className="mt-5 min-h-36 w-full rounded-xl border border-border bg-background px-3 py-3 outline-none focus:border-foreground/40 focus:ring-4 focus:ring-foreground/5"
+                    className="mt-5 min-h-36 w-full rounded-xl border border-border bg-input-background px-3 py-3 shadow-inner outline-none focus:border-foreground/40 focus:ring-4 focus:ring-foreground/5"
                   />
 
                   {sendError && (

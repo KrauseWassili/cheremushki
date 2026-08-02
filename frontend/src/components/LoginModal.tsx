@@ -143,7 +143,7 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
     };
 
     return (
-        <div className="fixed inset-0 z-50 p-4 bg-black/50 backdrop-blur-sm flex items-center justify-center">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4 backdrop-blur-sm">
             <div className="bg-bg border border-border rounded-2xl w-full max-w-md shadow-2xl">
                 <div className="flex justify-end p-6 border-b border-border">
                         <button
@@ -187,7 +187,7 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                                     required
                                     autoComplete="email"
                                     disabled={isSubmitting}
-                                    className="w-full px-3 py-2.5 bg-input-background border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60"
+                                    className="w-full rounded-lg border border-border bg-input-background px-3 py-2.5 text-sm text-foreground shadow-inner focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60"
                                 />
                             </div>
                             <div>
@@ -205,14 +205,14 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                                     required
                                     autoComplete="current-password"
                                     disabled={isSubmitting}
-                                    className="w-full px-3 py-2.5 bg-input-background border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60"
+                                    className="w-full rounded-lg border border-border bg-input-background px-3 py-2.5 text-sm text-foreground shadow-inner focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60"
                                 />
                             </div>
                             <div className="flex items-center justify-between text-xs">
                                 <label className="flex items-center gap-2 text-muted-foreground cursor-pointer">
                                     <input
                                         type="checkbox"
-                                        className="rounded border-border"
+                                        className="size-4 rounded border-border accent-primary focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60"
                                         checked={rememberMe}
                                         onChange={(e) => setRememberMe(e.target.checked)}
                                         disabled={isSubmitting}
@@ -290,7 +290,7 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                                     required
                                     autoComplete="email"
                                     disabled={isSubmitting}
-                                    className="w-full px-3 py-2.5 bg-input-background border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60"
+                                    className="w-full rounded-lg border border-border bg-input-background px-3 py-2.5 text-sm text-foreground shadow-inner focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60"
                                 />
                             </div>
 
@@ -302,7 +302,7 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                             )}
 
                             {resetSuccess && (
-                                <div className="p-3 bg-emerald-100 rounded-lg text-xs font-semibold text-emerald-800">
+                                <div className="rounded-lg bg-success-soft p-3 text-xs font-semibold text-success">
                                     {resetSuccess}
                                 </div>
                             )}
@@ -368,7 +368,7 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                                         required
                                         autoComplete="given-name"
                                         disabled={isSubmitting}
-                                        className="w-full px-3 py-2.5 bg-input-background border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60"
+                                        className="w-full rounded-lg border border-border bg-input-background px-3 py-2.5 text-sm text-foreground shadow-inner focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60"
                                     />
                                     <FieldErrors messages={registerErrors.fields.first_name}/>
                                 </div>
@@ -387,7 +387,7 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                                         required
                                         autoComplete="family-name"
                                         disabled={isSubmitting}
-                                        className="w-full px-3 py-2.5 bg-input-background border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60"
+                                        className="w-full rounded-lg border border-border bg-input-background px-3 py-2.5 text-sm text-foreground shadow-inner focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60"
                                     />
                                     <FieldErrors messages={registerErrors.fields.last_name}/>
                                 </div>
@@ -407,7 +407,7 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                                     required
                                     autoComplete="email"
                                     disabled={isSubmitting}
-                                    className="w-full px-3 py-2.5 bg-input-background border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60"
+                                    className="w-full rounded-lg border border-border bg-input-background px-3 py-2.5 text-sm text-foreground shadow-inner focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60"
                                 />
                                 <FieldErrors messages={registerErrors.fields.email}/>
                             </div>
@@ -426,7 +426,7 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                                     required
                                     autoComplete="new-password"
                                     disabled={isSubmitting}
-                                    className="w-full px-3 py-2.5 bg-input-background border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60"
+                                    className="w-full rounded-lg border border-border bg-input-background px-3 py-2.5 text-sm text-foreground shadow-inner focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60"
                                 />
                                 <FieldErrors messages={registerErrors.fields.password}/>
                             </div>
@@ -445,7 +445,7 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                                     required
                                     autoComplete="new-password"
                                     disabled={isSubmitting}
-                                    className="w-full px-3 py-2.5 bg-input-background border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60"
+                                    className="w-full rounded-lg border border-border bg-input-background px-3 py-2.5 text-sm text-foreground shadow-inner focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60"
                                 />
                                 <FieldErrors messages={registerErrors.fields.password_confirm}/>
                             </div>

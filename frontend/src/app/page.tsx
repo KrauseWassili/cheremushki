@@ -8,73 +8,74 @@ export default function Home() {
 
   return (
     <>
-      <section className="section-block text-foreground font-sans">
-        <div className="min-h-[70vh] flex items-center px-4">
-          <div className="w-full">
-            <div className="max-w-5xl w-full mx-auto flex flex-col-reverse md:flex-row items-center justify-between gap-10">
-              <div className="flex flex-col items-center md:items-start text-center md:text-left gap-6 md:w-1/2">
-                <h1 className="text-4xl md:text-5xl font-semibold">
-                  Клуб Черемушки
-                </h1>
-                <p className="text-lg md:text-xl text-darkest">
-                  <em>
-                    Закрытое сообщество русскоязычных специалистов из Бремена и
-                    соседних городов.
-                  </em>
-                </p>
-              </div>
+      <div className="home-first-screen">
+        <section className="section-block home-hero-section text-foreground font-sans">
+          <div className="flex items-center">
+            <div className="w-full">
+              <div className="max-w-3xl w-full mx-auto flex flex-col-reverse min-[900px]:flex-row items-center justify-between gap-10">
+                <div className="flex flex-col items-center min-[900px]:items-start text-center min-[900px]:text-left gap-6 min-[900px]:w-1/2">
+                  <h1 className="text-4xl font-semibold text-ink min-[900px]:text-5xl">
+                    Клуб Черемушки
+                  </h1>
+                  <p className="text-lg text-primary min-[900px]:text-xl">
+                    <em>
+                      Закрытое сообщество русскоязычных специалистов из Бремена и
+                      соседних городов.
+                    </em>
+                  </p>
+                </div>
 
-              <div className="flex justify-center md:justify-end w-full md:w-1/2">
-                <Image
-                  src="/hero_banner.png"
-                  alt=""
-                  width={300}
-                  height={300}
-                  className="w-64 h-auto rounded-xl shadow-lg"
-                />
+                <div className="flex justify-center min-[900px]:justify-end w-full min-[900px]:w-1/2">
+                  <Image
+                    src="/hero_banner.webp"
+                    alt=""
+                    width={300}
+                    height={300}
+                    className="w-64 h-auto rounded-xl shadow-[0_14px_36px_color-mix(in_srgb,var(--palette-ink)_20%,transparent)]"
+                  />
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      </section>
-      <section className="section-block text-foreground font-sans">
-        <p className="section-block__text flex justify-center font-black">
-          Не знаете, зачем всё это и с чего начать?
-        </p>
+        </section>
+        <section className="section-block home-intro-teaser text-foreground font-sans">
+          <p className="section-block__text flex justify-center font-black text-primary">
+            Не знаете, зачем всё это и с чего начать?
+          </p>
 
-        <p className="section-block__text text-center">
-          Пролистайте ниже — мы коротко объясним, как устроен клуб и чем он
-          может быть полезен.
-        </p>
-        <p className="section-block__text text-center">
-          Можете также подробнее узнать{" "}
-          <a href="/project" className="underline">
-            о нашем проекте
-          </a>{" "}
-          или прочитать{" "}
-          <a href="/rules" className="underline">
-            правила клуба
-          </a>
-          .
-        </p>
-      </section>
+          <p className="section-block__text text-center">
+            Ниже коротко объясняем, как устроен клуб и чем он полезен.
+          </p>
+          <p className="section-block__text text-center">
+            Подробнее можно узнать{" "}
+            <a href="/project" className="underline">
+              о проекте
+            </a>{" "}
+            или прочитать{" "}
+            <a href="/rules" className="underline">
+              правила клуба
+            </a>
+            .
+          </p>
+        </section>
+      </div>
       <section id="about" className="section-block text-foreground font-sans">
         <h2 className="section-block__title font-black">Зачем нужен клуб</h2>
 
         <p className="section-block__text">
           Вы с рождения живёте в Германии или только недавно сюда приехали? В
-          любом случае иногда не хватает людей, с которыми не нужно долго
+          любом случае иногда <em>не хватает людей</em>, с которыми не нужно долго
           объяснять свой культурный контекст, шутки и жизненный опыт.
         </p>
 
         <p className="section-block__text">
-          Мы хотим создать место, где такие люди смогут находить друг друга,
+          Мы хотим создать <em>место, где такие люди смогут находить друг друга</em>,
           знакомиться и выстраивать долгосрочные отношения.
         </p>
 
         <p className="section-block__text">
-          Это не очередной бесконечный чат и не площадка для сбора подписчиков.
-          Главная ценность клуба — люди и отношения между ними.
+          Это <em>не очередной бесконечный чат</em> и не площадка для сбора подписчиков.
+          <em>Главная ценность клуба</em> — люди и отношения между ними.
         </p>
       </section>
 
@@ -84,7 +85,7 @@ export default function Home() {
         </h2>
 
         <p className="section-block__text">
-          Общение проходит в закрытой Telegram-группе. В ней есть отдельные темы
+          Общение проходит в <em>закрытой Telegram-группе</em>. В ней есть отдельные темы
           для знакомств, работы и карьеры, профессиональных вопросов, жизни в
           Германии, событий, досуга и барахолки.
         </p>
@@ -96,14 +97,14 @@ export default function Home() {
 
         <p className="section-block__text">
           Не обязательно писать каждый день или участвовать во всех обсуждениях.
-          Пользуйтесь клубом в комфортном для себя ритме.
+          Пользуйтесь клубом <em>в комфортном для себя ритме</em>.
         </p>
       </section>
 
       <section className="section-block text-foreground font-sans">
         <h2 className="section-block__title font-black">Как всё устроено</h2>
 
-        <ol className="ml-5 list-decimal space-y-3 text-lg leading-8 text-darkest sm:ml-5">
+        <ol className="ml-5 list-decimal space-y-3 text-lg leading-8 text-body marker:text-accent">
           <li>Пройдите процедуру регистрации.</li>
 
           <li>Расскажите подробнее о себе, заполнив небольшую анкету.</li>
@@ -123,21 +124,21 @@ export default function Home() {
         <h3 className="section-block__subtitle font-bold">Взаимная помощь</h3>
 
         <p className="section-block__text">
-          Здесь можно просить помощи. Взамен мы предлагаем участникам по
-          возможности делиться собственным опытом и помогать другим.
+          Здесь можно <em>просить помощи</em>. Взамен мы предлагаем участникам по
+          возможности <em>делиться собственным опытом</em> и помогать другим.
         </p>
 
         <h3 className="section-block__subtitle font-bold">Уважение</h3>
 
         <p className="section-block__text">
-          Можно спорить и иметь разные взгляды, но нельзя унижать собеседника,
+          Можно спорить и иметь разные взгляды, но <em>нельзя унижать собеседника</em>,
           переходить на личности или намеренно провоцировать конфликт.
         </p>
 
         <h3 className="section-block__subtitle font-bold">Доверие</h3>
 
         <p className="section-block__text">
-          Мы общаемся как реальные люди и бережно относимся к информации,
+          Мы общаемся как <em>реальные люди</em> и бережно относимся к информации,
           которой делятся участники.
         </p>
 
@@ -156,11 +157,11 @@ export default function Home() {
         </h2>
 
         <p className="section-block__text">
-          Если вам близка идея клуба, прочитайте правила и
+          Если вам близка идея клуба, прочитайте правила и {" "}
           <button
             type="button"
             onClick={() => openLogin("register")}
-            className="underline cursor-pointer rounded-md px-2 py-2 font-medium text-secondary transition-colors hover:bg-white/10 hover:text-foreground"
+            className="button-flat cursor-pointer p-0 font-bold text-link underline underline-offset-[0.18em] transition-colors hover:text-link-hover"
           >
             зарегистрируйтесь.
           </button>

@@ -120,7 +120,7 @@ function PasswordResetConfirmContent() {
           )}
 
           {message && (
-            <p className="rounded-xl bg-emerald-100 px-3 py-2 text-sm font-bold text-emerald-800">
+            <p className="rounded-xl bg-success-soft px-3 py-2 text-sm font-bold text-success">
               {message}
             </p>
           )}
@@ -149,7 +149,7 @@ function PasswordResetConfirmContent() {
 
 function getFieldClassName() {
   return [
-    "h-11 rounded-xl border border-slate-200 bg-slate-50 px-3 text-foreground",
+    "h-11 rounded-xl border border-border bg-input-background px-3 text-foreground shadow-inner",
     "focus:border-foreground/40 focus:outline-none focus:ring-4 focus:ring-foreground/5",
   ].join(" ");
 }

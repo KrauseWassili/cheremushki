@@ -11,6 +11,7 @@ import {
 import Link from "next/link";
 import { useApp } from "@/providers/AppProvider";
 import { AvatarUpload } from "@/components/members/avatar-upload";
+import { CustomSelect } from "@/components/ui/custom-select";
 import { ApiError } from "@/lib/api";
 import {
   changePassword,
@@ -255,7 +256,7 @@ export default function ProfilePage() {
 
   if (!isLoggedIn) {
     return (
-      <div className="flex min-h-screen items-center justify-center px-4">
+      <div className="flex min-h-screen items-center justify-center">
         <div className="text-center">
           <p className="mb-4 text-2xl font-semibold text-foreground">
             Вы не вошли в систему :(
@@ -269,8 +270,8 @@ export default function ProfilePage() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8">
-      <section className="rounded-3xl border border-border bg-background p-6 shadow-sm sm:p-8">
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 py-6">
+      <section className="rounded-3xl border border-border bg-background p-6 shadow-sm">
         <div>
           <h1 className="text-3xl font-black">Профиль</h1>
           <p className="mt-2 text-sm text-muted-foreground">
@@ -283,7 +284,7 @@ export default function ProfilePage() {
         </div>
       </section>
 
-      <section className="rounded-3xl border border-border bg-background p-6 shadow-sm sm:p-8">
+      <section className="rounded-3xl border border-border bg-background p-6 shadow-sm">
         <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
           <div>
             <h2 className="text-xl font-black">Данные аккаунта</h2>
@@ -307,7 +308,7 @@ export default function ProfilePage() {
           </div>
         </div>
 
-        <div className="grid gap-5 sm:grid-cols-2">
+        <div className="grid gap-5 min-[900px]:grid-cols-2">
           <label className="grid gap-2">
             <span className="font-bold">Имя</span>
             <input
@@ -353,7 +354,7 @@ export default function ProfilePage() {
         </div>
       </section>
 
-      <section className="rounded-3xl border border-border bg-background p-6 shadow-sm sm:p-8">
+      <section className="rounded-3xl border border-border bg-background p-6 shadow-sm">
         <div className="mb-6 flex items-center justify-between gap-3">
           <div>
             <h2 className="text-xl font-black">Основные данные</h2>
@@ -370,8 +371,8 @@ export default function ProfilePage() {
           </div>
         </div>
 
-        <div className="grid gap-5 sm:grid-cols-2">
-          <div className="sm:col-span-2">
+        <div className="grid gap-5 min-[900px]:grid-cols-2">
+          <div className="min-[900px]:col-span-2">
             <AvatarUpload
               value={draft.avatarUrl}
               sourceValue={draft.avatarOriginalUrl}
@@ -406,7 +407,7 @@ export default function ProfilePage() {
 
           <label className="grid gap-2">
             <RequiredFieldLabel
-              label="Профессиональный заголовок"
+              label="Заголовок"
               isFilled={isFilled(draft.headline)}
             />
             <input
@@ -464,28 +465,38 @@ export default function ProfilePage() {
         </div>
       </section>
 
-      <section className="rounded-3xl border border-border bg-background p-6 shadow-sm sm:p-8">
+      <section className="rounded-3xl border border-border bg-background p-6 shadow-sm">
         <h2 className="text-xl font-black">Дополнительно</h2>
-        <div className="mt-5 grid gap-5 sm:grid-cols-2">
-          <label className="grid gap-2 sm:col-span-2">
+        <div className="mt-5 grid gap-5 min-[900px]:grid-cols-2">
+          <label className="grid gap-2 min-[900px]:col-span-2">
             <span className="font-bold">Как с вами связываться</span>
-            <select
+            <CustomSelect
               value={draft.contactMode}
-              onChange={(event) =>
+              onChange={(value) =>
                 updateField(
                   "contactMode",
-                  event.target.value as ProfileDraft["contactMode"],
+                  value as ProfileDraft["contactMode"],
                 )
               }
-              className={getEditableFieldClassName()}
-            >
-              <option value="direct">Показывать прямые контакты</option>
-              <option value="request">Показывать кнопку запроса</option>
-              <option value="group">
-                Предлагать общение в Telegram-группе
-              </option>
-              <option value="closed">Обращения закрыты</option>
-            </select>
+              options={[
+                {
+                  value: "direct",
+                  label: "Показывать прямые контакты",
+                },
+                {
+                  value: "request",
+                  label: "Показывать кнопку запроса",
+                },
+                {
+                  value: "group",
+                  label: "Предлагать общение в Telegram-группе",
+                },
+                {
+                  value: "closed",
+                  label: "Обращения закрыты",
+                },
+              ]}
+            />
           </label>
 
           <label className="grid gap-2">
@@ -554,7 +565,7 @@ export default function ProfilePage() {
             />
           </label>
 
-          <label className="grid gap-2 sm:col-span-2">
+          <label className="grid gap-2 min-[900px]:col-span-2">
             <span className="font-bold">Направления</span>
             <input
               value={draft.tags}
@@ -627,7 +638,7 @@ function AccountSettingsModal({
   onDeleteAccount: (password: string) => Promise<void>;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4 backdrop-blur-sm">
       <div className="w-full max-w-lg rounded-2xl border border-border bg-bg p-6 shadow-2xl">
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -716,7 +727,7 @@ function AccountSettingsOption({
       className={[
         "rounded-xl border px-4 py-3 text-left transition",
         danger
-          ? "border-red-200 text-red-800 hover:bg-red-50"
+          ? "border-destructive/30 text-destructive hover:bg-danger-soft"
           : "border-border hover:bg-muted",
       ].join(" ")}
     >
@@ -778,7 +789,7 @@ function NameSettingsForm({
         ← Назад
       </button>
       <h4 className="text-lg font-black">Изменить имя и фамилию</h4>
-      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+      <div className="mt-4 grid gap-4 min-[900px]:grid-cols-2">
         <label className="grid gap-2">
           <span className="text-sm font-bold">Имя</span>
           <input
@@ -805,7 +816,7 @@ function NameSettingsForm({
       </div>
 
       {message && (
-        <p className="mt-4 rounded-xl bg-emerald-100 px-3 py-2 text-sm font-bold text-emerald-800">
+        <p className="mt-4 rounded-xl bg-success-soft px-3 py-2 text-sm font-bold text-success">
           {message}
         </p>
       )}
@@ -906,7 +917,7 @@ function EmailSettingsForm({
       )}
 
       {message && (
-        <p className="mt-4 rounded-xl bg-emerald-100 px-3 py-2 text-sm font-bold text-emerald-800">
+        <p className="mt-4 rounded-xl bg-success-soft px-3 py-2 text-sm font-bold text-success">
           {message}
         </p>
       )}
@@ -1039,7 +1050,7 @@ function DeleteAccountSettingsForm({
       <AccountSettingsBackButton onBack={onBack} />
       <h4 className="text-lg font-black">Удалить аккаунт</h4>
       <div className="mt-4 grid gap-4">
-        <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-3 text-sm leading-6 text-red-800">
+        <p className="rounded-xl border border-destructive/30 bg-danger-soft px-3 py-3 text-sm leading-6 text-destructive">
           После подтверждения аккаунт будет деактивирован, а профиль скрыт из каталога.
         </p>
 
@@ -1100,7 +1111,7 @@ function AccountSettingsFeedback({
       )}
 
       {message && (
-        <p className="mt-4 rounded-xl bg-emerald-100 px-3 py-2 text-sm font-bold text-emerald-800">
+        <p className="mt-4 rounded-xl bg-success-soft px-3 py-2 text-sm font-bold text-success">
           {message}
         </p>
       )}
@@ -1157,8 +1168,8 @@ function getApiErrorMessage(error: unknown, fallback: string) {
 
 function getReadOnlyAccountFieldClassName() {
   return [
-    "h-11 cursor-not-allowed rounded-xl border border-slate-300",
-    "bg-slate-200/70 px-3 text-slate-500 shadow-inner",
+    "h-11 cursor-not-allowed rounded-xl border border-border",
+    "bg-muted/70 px-3 text-muted-foreground shadow-inner",
   ].join(" ");
 }
 
@@ -1167,7 +1178,7 @@ function getEditableFieldClassName(multiline = false) {
     multiline
       ? "min-h-28 rounded-xl border px-3 py-3"
       : "h-11 rounded-xl border px-3",
-    "border-slate-200 bg-slate-50 text-foreground",
+    "border-border bg-input-background text-foreground shadow-inner",
     "focus:border-foreground/40 focus:outline-none focus:ring-4 focus:ring-foreground/5",
   ].join(" ");
 }
@@ -1176,7 +1187,7 @@ function getSecondaryButtonClassName(danger = false) {
   return [
     "rounded-xl border px-4 py-2.5 text-sm font-bold transition disabled:opacity-60",
     danger
-      ? "border-red-200 text-red-700 hover:bg-red-50"
+      ? "border-destructive/30 text-destructive hover:bg-danger-soft"
       : "border-border text-foreground hover:bg-muted",
   ].join(" ");
 }
@@ -1185,8 +1196,8 @@ function getRequiredFieldClassName(value: string, multiline = false) {
   return [
     getEditableFieldClassName(multiline),
     isFilled(value)
-      ? "border-emerald-300 focus:border-emerald-500"
-      : "border-amber-300 focus:border-amber-500",
+      ? "border-success focus:border-success"
+      : "border-warning focus:border-warning",
   ].join(" ");
 }
 
@@ -1204,8 +1215,8 @@ function RequiredFieldLabel({
         className={[
           "rounded-full px-2 py-0.5 text-[11px] font-bold",
           isFilled
-            ? "bg-emerald-100 text-emerald-800"
-            : "bg-amber-100 text-amber-800",
+            ? "bg-success-soft text-success"
+            : "bg-warning-soft text-warning",
         ].join(" ")}
       >
         {isFilled ? "Заполнено" : "Обязательно"}

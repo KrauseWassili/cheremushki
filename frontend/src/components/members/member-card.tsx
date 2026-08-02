@@ -15,8 +15,8 @@ export function MemberCard({ member }: MemberCardProps) {
   ].filter(Boolean);
 
   return (
-    <article className="rounded-3xl border border-border bg-background p-5 shadow-sm transition hover:border-foreground/20 hover:shadow-md sm:p-7">
-      <div className="flex flex-col gap-5 sm:flex-row">
+    <article className="rounded-3xl border border-border bg-background p-5 shadow-sm transition hover:border-primary/30 hover:shadow-md">
+      <div className="flex flex-col gap-5 min-[900px]:flex-row">
         <Link
           href={`/members/${member.slug}`}
           className="shrink-0 self-start"
@@ -26,26 +26,26 @@ export function MemberCard({ member }: MemberCardProps) {
             <img
               src={member.avatarUrl}
               alt={`Аватар ${member.fullName}`}
-              className="size-24 rounded-2xl object-cover sm:size-32"
+              className="size-24 rounded-2xl object-cover"
             />
           ) : (
-            <div className="flex size-24 items-center justify-center rounded-2xl bg-muted text-2xl font-black sm:size-32">
+            <div className="flex size-24 items-center justify-center rounded-2xl bg-muted text-2xl font-black">
               {member.fullName.charAt(0)}
             </div>
           )}
         </Link>
 
         <div className="min-w-0 flex-1">
-          <div className="flex flex-col justify-between gap-3 sm:flex-row">
+          <div className="flex flex-col justify-between gap-3 min-[900px]:flex-row">
             <div>
               <Link
                 href={`/members/${member.slug}`}
-                className="text-xl font-black hover:underline sm:text-2xl"
+                className="text-xl font-black text-ink hover:text-link hover:underline"
               >
                 {member.fullName}
               </Link>
 
-              <p className="mt-1 text-base text-muted-foreground">
+              <p className="mt-1 text-base font-semibold text-primary">
                 {member.headline}
               </p>
 
@@ -60,7 +60,7 @@ export function MemberCard({ member }: MemberCardProps) {
               </p>
             </div>
 
-            <span className="h-fit w-fit rounded-full bg-muted px-3 py-1 text-xs font-bold text-foreground">
+            <span className="h-fit w-fit rounded-full bg-mint/35 px-3 py-1 text-xs font-bold text-primary">
               {getContactModeLabel(member)}
             </span>
           </div>
@@ -74,7 +74,7 @@ export function MemberCard({ member }: MemberCardProps) {
               {member.tags.slice(0, 5).map((tag) => (
                 <span
                   key={tag}
-                  className="rounded-full border border-border bg-muted/50 px-3 py-1 text-xs font-medium"
+                  className="rounded-full border border-border bg-surface-muted/70 px-3 py-1 text-xs font-medium text-muted-foreground"
                 >
                   {tag}
                 </span>
@@ -84,19 +84,19 @@ export function MemberCard({ member }: MemberCardProps) {
 
           <div className="mt-5 grid gap-4">
             <div>
-              <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
+              <p className="text-xs font-bold uppercase tracking-wide text-accent">
                 Могу помочь
               </p>
-              <p className="mt-1 text-sm leading-6">
+              <p className="mt-1 text-sm leading-6 text-body">
                 {member.canHelpWith}
               </p>
             </div>
 
             <div>
-              <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
+              <p className="text-xs font-bold uppercase tracking-wide text-accent">
                 Сейчас интересно
               </p>
-              <p className="mt-1 text-sm leading-6">
+              <p className="mt-1 text-sm leading-6 text-body">
                 {member.lookingFor}
               </p>
             </div>

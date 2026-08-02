@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import "@fontsource-variable/golos-text/wght.css";
 import "./globals.css";
 import Header from "@/components/header";
 import Footer from "@/components/footer";
@@ -9,30 +9,23 @@ import {
 } from "@/components/scroll-to-top";
 import { Providers } from "./providers/providers";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+const siteUrl = new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000");
 
 export const metadata: Metadata = {
-  title: "Cheremushki",
-  description: "Локальное русскоязычное сообщество",
+  metadataBase: siteUrl,
+  title: "Черемушки",
+  description: "Локальное русскоязычное сообщество в Бремене и рядом",
   openGraph: {
-    title: "Cheremushki",
-    description: "Локальное русскоязычное сообщество",
-    url: "https://cheremushki.vercel.app",
-    siteName: "Cheremushki",
+    title: "Черемушки",
+    description: "Локальное русскоязычное сообщество в Бремене и рядом",
+    url: siteUrl?.toString(),
+    siteName: "Черемушки",
     images: [
       {
-        url: "https://cheremushki.vercel.app/social-preview.png",
+        url: "/social-preview.png",
         width: 1200,
         height: 630,
-        alt: "Превью Cheremushki",
+        alt: "Превью клуба Черемушки",
       },
     ],
     locale: "ru_RU",
@@ -40,12 +33,11 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Cheremushki",
-    description: "Локальное русскоязычное сообщество",
-    images: ["https://Cheremushki.vercel.app/social-preview.png"],
+    title: "Черемушки",
+    description: "Локальное русскоязычное сообщество в Бремене и рядом",
+    images: ["/social-preview.png"],
   },
 };
-
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -54,16 +46,16 @@ export default function RootLayout({
   return (
     <html lang="ru" suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased h-screen overflow-hidden flex flex-col bg-bg`}
+        className="flex h-screen flex-col overflow-hidden bg-bg antialiased"
       >
         <Providers>
           <Header />
           <ScrollToTop />
           <main
             id={APP_SCROLL_CONTAINER_ID}
-            className="flex-1 min-h-0 overflow-auto pt-14 pb-16 sm:pt-16 sm:pb-20"
+            className="flex-1 min-h-0 overflow-auto pt-14 pb-32 min-[900px]:pb-20"
           >
-            <div className="mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-8">
+            <div className="mx-auto w-full max-w-3xl px-4">
               {children}
             </div>
           </main>
