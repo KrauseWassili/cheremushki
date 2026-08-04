@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Дополни профиль</title>
+</head>
+<body style="margin:0; padding:0; background-color:#f4f4f7; font-family:Arial, Helvetica, sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f7; padding:32px 0;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff; border-radius:8px; overflow:hidden; max-width:600px; width:100%;">
+          <tr>
+            <td style="background-color:#1c1c1e; padding:24px 32px;">
+              <span style="color:#ffffff; font-size:20px; font-weight:bold;">Профиль в «Наши люди»</span>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px;">
+              <p style="margin:0 0 16px; font-size:16px; line-height:1.5; color:#1c1c1e;">
+                Здравствуй, {{ user.first_name }}!
+              </p>
+              <p style="margin:0 0 16px; font-size:16px; line-height:1.5; color:#1c1c1e;">
+                Твой профиль уже опубликован в разделе «Наши люди», но пока заполнен не полностью.
+                Дополни анкету — так другим участникам будет проще с тобой познакомиться.
+              </p>
+              <table role="presentation" cellpadding="0" cellspacing="0" style="margin:24px 0;">
+                <tr>
+                  <td align="center" style="border-radius:6px; background-color:#1c1c1e;">
+                    <a href="{{ profile_url }}"
+                       target="_blank"
+                       style="display:inline-block; padding:14px 28px; font-size:16px; font-weight:bold; color:#ffffff; text-decoration:none; border-radius:6px;">
+                      Заполнить профиль
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

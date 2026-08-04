@@ -15,6 +15,9 @@ def send_telegram_invite_email(self, user_id: int):
     except CustomUser.DoesNotExist:
         return
 
+    if not user.is_active:
+        return
+
     invite, _ = TelegramInvite.objects.get_or_create(user=user)
 
     if not invite.invite_link:
@@ -29,8 +32,11 @@ def send_telegram_invite_email(self, user_id: int):
         {"user": user, "invite_link": invite.invite_link},
     )
     send_mail(
-        subject="Deine Einladung zur Telegram-Gruppe",
-        message=f"Bitte tritt unserer Telegram-Gruppe über folgenden Link bei: {invite.invite_link}",
+        subject="Приглашение в Telegram-группу Черёмушки",
+        message=(
+            "Аккаунт активирован. Вступи в закрытую Telegram-группу по ссылке: "
+            f"{invite.invite_link}"
+        ),
         html_message=html_message,
         from_email=settings.DEFAULT_FROM_EMAIL,
         recipient_list=[user.email],

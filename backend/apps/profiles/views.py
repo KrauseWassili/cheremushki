@@ -58,6 +58,8 @@ class ProfileMeViewSet(viewsets.GenericViewSet):
         parser_classes=[MultiPartParser, FormParser],
     )
     async def upload_avatar(self, request):
+        from apps.bot.tasks.profile_post import sync_telegram_profile_post
+
         profile = await aget_or_create_profile(request.user)
         serializer = AvatarUploadSerializer(data=request.data)
         await sync_to_async(serializer.is_valid)(raise_exception=True)
@@ -82,6 +84,8 @@ class ProfileMeViewSet(viewsets.GenericViewSet):
             return profile
 
         profile = await sync_to_async(_save_avatar)()
+
+        await sync_to_async(sync_telegram_profile_post.delay)(profile.user_id)
         out = MemberProfileSerializer(profile, context={"request": request})
         return Response(await get_data(out), status=status.HTTP_200_OK)
 
@@ -91,7 +95,9 @@ class MemberProfileViewSet(
     mixins.RetrieveModelMixin,
     viewsets.GenericViewSet,
 ):
-    """Mitgliederverzeichnis und öffentliche Profil-Detailseite."""
+    """
+    Mitgliederverzeichnis und öffentliche Profil-Detailseite.
+    """
 
     serializer_class = MemberProfileSerializer
     permission_classes = [IsActiveAuthenticated]

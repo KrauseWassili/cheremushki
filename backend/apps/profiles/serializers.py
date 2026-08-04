@@ -131,7 +131,11 @@ class MemberProfileSerializer(serializers.ModelSerializer):
             instance.refresh_directory_visibility(save=True)
             return instance
 
-        return await sync_to_async(_update)()
+        profile = await sync_to_async(_update)()
+        from apps.bot.tasks.profile_post import sync_telegram_profile_post
+
+        await sync_to_async(sync_telegram_profile_post.delay)(profile.user_id)
+        return profile
 
 
 class AvatarUploadSerializer(serializers.Serializer):
@@ -155,13 +159,9 @@ class ContactRequestCreateSerializer(serializers.Serializer):
         if profile.user_id == request.user.pk:
             raise ValidationError("Du kannst dich nicht selbst anfragen.")
         if profile.contact_mode != ContactMode.REQUEST:
-            raise ValidationError(
-                "Dieses Profil akzeptiert keine Kontaktanfragen."
-            )
+            raise ValidationError("Dieses Profil akzeptiert keine Kontaktanfragen.")
         if ContactRequest.objects.filter(
             from_user=request.user, to_profile=profile
         ).exists():
-            raise ValidationError(
-                "Du hast dieses Mitglied bereits angefragt."
-            )
+            raise ValidationError("Du hast dieses Mitglied bereits angefragt.")
         return attrs

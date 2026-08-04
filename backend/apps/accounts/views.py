@@ -22,6 +22,7 @@ from apps.bot.tasks.email import send_telegram_invite_email
 
 from .models import CustomUser
 from .serializers import (
+    AccountActivationSerializer,
     AccountDeleteSerializer,
     CustomTokenObtainPairSerializer,
     LogoutSerializer,
@@ -31,6 +32,7 @@ from .serializers import (
     RegisterSerializer,
     UserSerializer,
 )
+from .tasks import send_activation_email
 
 
 class LoginViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
@@ -67,7 +69,7 @@ class RegisterViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
     """
     Sign-up-Contract (stabil):
     - 201 + { user, detail }
-    - keine JWT-Tokens (Telegram-Gate: Login erst nach is_active=True)
+    - keine JWT-Tokens (Login erst nach E-Mail-Aktivierung / is_active=True)
     """
 
     serializer_class = RegisterSerializer
@@ -79,18 +81,87 @@ class RegisterViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
         await sync_to_async(serializer.is_valid)(raise_exception=True)
         user = await serializer.asave()
 
-        await sync_to_async(send_telegram_invite_email.delay)(user.pk)
+        await sync_to_async(send_activation_email.delay)(user.pk)
 
         user_data = await get_data(UserSerializer(user))
         return Response(
             {
                 "user": user_data,
                 "detail": (
-                    "Registrierung erfolgreich. Bitte prüfe dein Postfach "
-                    "und tritt der Telegram-Gruppe bei, um dein Konto zu aktivieren."
+                    "Регистрация успешна. Проверь почту и перейди по ссылке, "
+                    "чтобы активировать аккаунт."
                 ),
             },
             status=status.HTTP_201_CREATED,
+        )
+
+
+class ActivateAccountViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
+    """
+    Aktivierung des Kontos über den Link in der E-Mail, anschließend eine Einladung über Telegram.
+    """
+
+    serializer_class = AccountActivationSerializer
+    permission_classes = [AllowAny]
+    queryset = CustomUser.objects.none()
+    throttle_scope = "password_reset"
+
+    def get_throttles(self):
+        return [ScopedRateThrottle()]
+
+    async def acreate(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        await sync_to_async(serializer.is_valid)(raise_exception=True)
+        uid_b64 = serializer.validated_data["uid"]
+        token = serializer.validated_data["token"]
+
+        def _activate():
+            try:
+                uid = force_str(urlsafe_base64_decode(uid_b64))
+                user = CustomUser.objects.get(pk=uid)
+            except (CustomUser.DoesNotExist, ValueError, TypeError, OverflowError):
+                return ("invalid_link", None)
+
+            if user.is_active:
+                return ("already_active", user)
+
+            if not default_token_generator.check_token(user, token):
+                return ("invalid_token", None)
+
+            user.is_active = True
+            user.save(update_fields=["is_active"])
+            send_telegram_invite_email.delay(user.pk)
+            return ("ok", user)
+
+        result, user = await sync_to_async(_activate)()
+        if result == "invalid_link":
+            return Response(
+                {"detail": "Некорректная ссылка активации."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if result == "invalid_token":
+            return Response(
+                {"detail": "Ссылка активации недействительна или устарела."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if result == "already_active":
+            return Response(
+                {
+                    "detail": "Аккаунт уже активирован. Можно войти.",
+                    "already_active": True,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        return Response(
+            {
+                "detail": (
+                    "Аккаунт активирован. Проверь почту — там приглашение "
+                    "в Telegram-группу. Теперь можно войти и заполнить профиль."
+                ),
+                "already_active": False,
+            },
+            status=status.HTTP_200_OK,
         )
 
 
@@ -224,9 +295,7 @@ class PasswordViewSet(viewsets.GenericViewSet):
 
         def _reset_password():
             try:
-                uid = force_str(
-                    urlsafe_base64_decode(serializer.validated_data["uid"])
-                )
+                uid = force_str(urlsafe_base64_decode(serializer.validated_data["uid"]))
                 user = CustomUser.objects.get(pk=uid)
             except (CustomUser.DoesNotExist, ValueError, TypeError, OverflowError):
                 return ("invalid_link", None)
@@ -306,6 +375,4 @@ class AccountDeleteViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
                 profile.save(update_fields=["is_directory_visible", "slug"])
 
         await sync_to_async(_soft_delete)()
-        return Response(
-            {"detail": "Konto wurde gelöscht."}, status=status.HTTP_200_OK
-        )
+        return Response({"detail": "Konto wurde gelöscht."}, status=status.HTTP_200_OK)

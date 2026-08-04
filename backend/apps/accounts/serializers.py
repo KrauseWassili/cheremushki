@@ -11,7 +11,7 @@ from .models import CustomUser
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     """
     JWT-Login mit klarer Fehlermeldung für noch nicht aktivierte Konten
-    (Telegram-Gate: is_active=False bis Gruppenbeitritt).
+    (E-Mail-Aktivierung: is_active=False bis Klick auf Aktivierungslink).
     """
 
     def validate(self, attrs):
@@ -30,8 +30,8 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             raise ValidationError(
                 {
                     "detail": (
-                        "Konto noch nicht aktiviert. Bitte tritt der Telegram-Gruppe "
-                        "über den Einladungslink in deiner E-Mail bei."
+                        "Аккаунт ещё не активирован. Проверь почту и перейди "
+                        "по ссылке активации."
                     )
                 }
             )
@@ -74,6 +74,10 @@ class RegisterSerializer(serializers.ModelSerializer):
         return attrs
 
     async def acreate(self, validated_data):
+        validated_data.setdefault("street", "")
+        validated_data.setdefault("zip_code", "")
+        validated_data.setdefault("city", "")
+        validated_data.setdefault("is_active", False)
         return await sync_to_async(CustomUser.objects.create_user)(**validated_data)
 
 
@@ -184,3 +188,8 @@ class AccountDeleteSerializer(serializers.Serializer):
 
 class LogoutSerializer(serializers.Serializer):
     refresh = serializers.CharField()
+
+
+class AccountActivationSerializer(serializers.Serializer):
+    uid = serializers.CharField()
+    token = serializers.CharField()
