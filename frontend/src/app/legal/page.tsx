@@ -3,14 +3,14 @@
 export default function ContactPage() {
   return (
     <main className="mx-auto w-full max-w-3xl py-4">
-      <header className="mx-auto mb-10 max-w-3xl text-center">
-        <h1 className="mt-3 text-4xl font-black tracking-tight">Правовая информация</h1>
+      <header className="text-page-header mx-auto mb-10 max-w-3xl text-center">
+        <h1 className="mt-3 text-4xl font-bold tracking-tight">Правовая информация</h1>
 
         <p className="section-block__text">Сведения согласно § 5 DDG</p>
       </header>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">Ответственный</h2>
+        <h2 className="section-block__title font-bold">Ответственный</h2>
 
         <address className="section-block__text not-italic">
           [ИМЯ И ФАМИЛИЯ]
@@ -26,7 +26,7 @@ export default function ContactPage() {
       </section>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">Контакты</h2>
+        <h2 className="section-block__title font-bold">Контакты</h2>
 
         <p className="section-block__text">
           Почта:{" "}

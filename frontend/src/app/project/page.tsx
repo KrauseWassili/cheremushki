@@ -3,8 +3,8 @@
 export default function AboutPage() {
   return (
     <main className="mx-auto w-full max-w-3xl py-4">
-      <header className="mx-auto mb-10 max-w-3xl text-center">
-        <h1 className="mt-3 text-4xl font-black tracking-tight">
+      <header className="text-page-header mx-auto mb-10 max-w-3xl text-center">
+        <h1 className="mt-3 text-4xl font-bold tracking-tight">
           О проекте
         </h1>
 
@@ -22,7 +22,7 @@ export default function AboutPage() {
       </header>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">
+        <h2 className="section-block__title font-bold">
           Почему локальное сообщество
         </h2>
 
@@ -47,7 +47,7 @@ export default function AboutPage() {
       </section>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">
+        <h2 className="section-block__title font-bold">
           Почему клуб закрытый
         </h2>
 
@@ -69,7 +69,7 @@ export default function AboutPage() {
       </section>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">
+        <h2 className="section-block__title font-bold">
           Кто занимается проектом
         </h2>
 
@@ -97,7 +97,7 @@ export default function AboutPage() {
       </section>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">
+        <h2 className="section-block__title font-bold">
           Деньги и независимость
         </h2>
 
@@ -119,7 +119,7 @@ export default function AboutPage() {
       </section>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">
+        <h2 className="section-block__title font-bold">
           Как развивается проект
         </h2>
 
@@ -141,7 +141,7 @@ export default function AboutPage() {
       </section>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">
+        <h2 className="section-block__title font-bold">
           Участие и инициативы
         </h2>
 
@@ -159,7 +159,7 @@ export default function AboutPage() {
       </section>
 
       <section id="contact" className="section-block">
-        <h2 className="section-block__title font-black">Связаться с нами</h2>
+        <h2 className="section-block__title font-bold">Связаться с нами</h2>
 
         <p className="section-block__text">
           Если у вас есть вопрос о клубе, заявке, правилах или обработке

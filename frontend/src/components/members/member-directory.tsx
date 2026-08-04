@@ -5,6 +5,8 @@ import { MemberCard } from "./member-card";
 import { MemberFilterSelect } from "./member-filter-select";
 import { useMemo, useState } from "react";
 import { isProfileReadyForDirectory } from "@/lib/profile";
+import { Button } from "@/components/ui/button";
+import { TextField } from "@/components/ui/text-field";
 
 type MemberDirectoryProps = {
   members: MemberProfile[];
@@ -84,7 +86,7 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
   return (
     <div className="grid gap-8 min-[1100px]:ml-[-292px] min-[1100px]:w-[calc(100%+292px)] min-[1100px]:grid-cols-[260px_minmax(0,1fr)] min-[1100px]:items-start">
       <aside className="rounded-3xl border border-border bg-background p-5 shadow-sm min-[1100px]:sticky min-[1100px]:top-6">
-        <h3 className="font-black">Фильтры</h3>
+        <h3 className="font-bold">Фильтры</h3>
 
         <div className="mt-5 grid gap-4 min-[1100px]:grid-cols-1">
           <MemberFilterSelect
@@ -98,21 +100,21 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
 
           <MemberFilterSelect
             id="filter-tag"
-            label="Направление"
+            label="Ключевое слово"
             value={selectedTag}
             options={tags}
-            placeholder="Все направления"
+            placeholder="Все ключевые слова"
             onChange={setSelectedTag}
           />
 
           {hasFilters && (
-            <button
+            <Button
               type="button"
               onClick={resetFilters}
-              className="rounded-xl border border-border px-4 py-2 text-sm font-bold hover:bg-muted"
+              size="sm"
             >
               Очистить фильтры
-            </button>
+            </Button>
           )}
         </div>
       </aside>
@@ -123,13 +125,14 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
             Поиск участников
           </label>
 
-          <input
+          <TextField
             id="members-search"
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Имя, профессия, компания, навык или ключевое слово"
-            className="h-14 w-full rounded-2xl border border-border bg-input-background px-5 text-base shadow-inner outline-none transition placeholder:text-muted-foreground focus:border-foreground/40 focus:ring-4 focus:ring-foreground/5"
+            fieldSize="lg"
+            className="rounded-2xl px-5 text-base"
           />
 
           <p className="mt-3 text-sm text-muted-foreground">
@@ -149,18 +152,19 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
           </div>
         ) : (
           <div className="rounded-3xl border border-dashed border-border p-10 text-center">
-            <p className="text-lg font-black">Никого не нашли</p>
+            <p className="text-lg font-bold">Никого не нашли</p>
             <p className="mt-2 text-sm text-muted-foreground">
               Попробуй изменить запрос или сбросить фильтры.
             </p>
 
-            <button
+            <Button
               type="button"
               onClick={resetFilters}
-              className="mt-5 rounded-xl bg-foreground px-5 py-2.5 text-sm font-bold text-background"
+              variant="solid"
+              className="mt-5"
             >
               Показать всех
-            </button>
+            </Button>
           </div>
         )}
       </div>

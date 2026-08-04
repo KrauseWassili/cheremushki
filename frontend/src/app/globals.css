@@ -99,11 +99,13 @@
   --font-mono: var(--font-code);
 }
 
-body {
-  font-family: var(--font-body);
-  font-size: 1rem;
-  line-height: 1.6;
-  color: var(--color-text);
+@layer base {
+  body {
+    font-family: var(--font-body);
+    font-size: 1rem;
+    line-height: 1.6;
+    color: var(--color-text);
+  }
 }
 
 button:not(:disabled):not([role="option"]):not(.button-flat) {
@@ -122,28 +124,6 @@ button:not(:disabled):not([role="option"]):not(.button-flat):active {
   box-shadow:
     0 1px 2px color-mix(in srgb, var(--palette-ink) 10%, transparent),
     inset 0 1px 2px color-mix(in srgb, var(--palette-ink) 12%, transparent);
-}
-
-.button-gray-rounded {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  background: var(--color-primary);
-  color: var(--color-surface);
-  border: none;
-  padding: 0.5rem 1rem;
-  border-radius: 6px;
-  cursor: pointer;
-  box-shadow:
-    0 1px 2px color-mix(in srgb, var(--palette-ink) 14%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--palette-surface) 30%, transparent);
-}
-
-.button-gray-rounded:hover {
-  background: var(--color-primary-hover);
-  box-shadow:
-    0 4px 10px color-mix(in srgb, var(--palette-ink) 12%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--palette-surface) 35%, transparent);
 }
 
 .section-block {
@@ -187,6 +167,14 @@ button:not(:disabled):not([role="option"]):not(.button-flat):active {
 
 .section-block__text + .section-block__text {
   margin-top: 0.85rem;
+}
+
+.text-page-header .section-block__text:first-of-type {
+  margin-top: 1.25rem;
+}
+
+label.grid > span:first-child {
+  padding-left: 0.25rem;
 }
 
 .section-block__list {
@@ -233,58 +221,61 @@ button:not(:disabled):not([role="option"]):not(.button-flat):active {
   margin-top: 0.425rem;
 }
 
-a {
-  color: var(--color-link);
-  text-decoration-color: color-mix(in srgb, var(--color-link) 45%, transparent);
-  text-underline-offset: 0.18em;
-  transition:
-    color 150ms ease,
-    text-decoration-color 150ms ease;
-}
+@layer base {
+  a {
+    color: var(--color-link);
+    text-decoration-color: color-mix(in srgb, var(--color-link) 45%, transparent);
+    text-underline-offset: 0.18em;
+    transition:
+      color 150ms ease,
+      text-decoration-color 150ms ease;
+  }
 
-a:hover {
-  color: var(--color-link-hover);
-  text-decoration-color: currentColor;
-}
+  a:hover {
+    color: var(--color-link-hover);
+    text-decoration-color: currentColor;
+  }
 
-h1,
-h2,
-h3,
-h4,
-h5,
-h6 {
-  color: var(--color-heading);
-  font-weight: 700;
-  line-height: 1.2;
-  
-}
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    color: var(--color-heading);
+    font-weight: 700;
+    line-height: 1.2;
+  }
 
-h1 {
-  color: var(--color-ink);
-  font-size: 1.875rem;
-  margin: 0 0 0.5rem;
-}
+  h1 {
+    color: var(--color-ink);
+    font-size: 1.875rem;
+    margin: 0 0 0.5rem;
+  }
 
-h2 {
-  color: var(--color-heading);
-  font-size: 1.5rem;
-  margin: 0 0 1rem;
-}
+  h2 {
+    color: var(--color-heading);
+    font-size: 1.5rem;
+    margin: 0 0 1rem;
+  }
 
-h3 {
-  color: var(--color-primary);
-  font-size: 1.25rem;
-  margin: 0 0 0.5rem;
-}
-h4 {
-  color: var(--color-heading);
-  font-size: 1.125rem;
-  margin: 0 0 0.5rem;
-}
-p {
-  color: inherit;
-  line-height: 1.5;
-  margin: 0 0 1rem;
+  h3 {
+    color: var(--color-primary);
+    font-size: 1.25rem;
+    margin: 0 0 0.5rem;
+  }
+
+  h4 {
+    color: var(--color-heading);
+    font-size: 1.125rem;
+    margin: 0 0 0.5rem;
+  }
+
+  p {
+    color: inherit;
+    line-height: 1.5;
+    margin: 0 0 1rem;
+  }
 }
 
 @media (min-width: 640px) {
@@ -300,17 +291,6 @@ p {
     font-size: 1.0625rem;
   }
 
-  h1 {
-    font-size: 2.25rem;
-  }
-
-  h2 {
-    font-size: 1.875rem;
-  }
-
-  h3 {
-    font-size: 1.5rem;
-  }
 }
 
 @media (min-width: 1024px) {
@@ -330,7 +310,4 @@ p {
     font-size: 1.125rem;
   }
 
-  h1 {
-    font-size: 2.5rem;
-  }
 }

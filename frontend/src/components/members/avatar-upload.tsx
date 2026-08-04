@@ -2,6 +2,8 @@
 
 import { type Dispatch, useRef, useState } from "react";
 import { useEscapeKey } from "@/lib/use-escape-key";
+import { Button } from "@/components/ui/button";
+import { ModalFrame } from "@/components/ui/modal";
 
 type AvatarUploadProps = {
   value?: string;
@@ -290,31 +292,29 @@ export function AvatarUpload({
           />
 
           <div className="flex flex-wrap gap-3">
-            <button
+            <Button
               type="button"
               onClick={() => inputRef.current?.click()}
-              className="rounded-xl border border-border px-4 py-2.5 text-sm font-bold hover:bg-muted"
             >
               {value ? "Заменить" : "Загрузить"}
-            </button>
+            </Button>
 
             {value && (
               <>
-                <button
+                <Button
                   type="button"
                   onClick={openCropModal}
-                  className="rounded-xl border border-border px-4 py-2.5 text-sm font-bold hover:bg-muted"
                 >
                   Настроить кадр
-                </button>
+                </Button>
 
-                <button
+                <Button
                   type="button"
                   onClick={handleRemove}
-                  className="rounded-xl border border-border px-4 py-2.5 text-sm font-bold text-destructive hover:bg-danger-soft"
+                  variant="danger"
                 >
                   Удалить
-                </button>
+                </Button>
               </>
             )}
           </div>
@@ -332,16 +332,10 @@ export function AvatarUpload({
       </p>
 
       {cropSource && isCropOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4 backdrop-blur-sm">
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label="Настройка фотографии"
-            className="w-full max-w-xl rounded-2xl border border-border bg-bg p-6 shadow-2xl"
-          >
+        <ModalFrame label="Настройка фотографии" className="max-w-xl">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h3 className="text-xl font-black">Настройка фотографии</h3>
+                <h3 className="text-xl font-bold">Настройка фотографии</h3>
                 <p className="mt-1 text-sm text-muted-foreground">
                   Фото вписано в квадрат. Передвиньте рамку или потяните угол.
                 </p>
@@ -353,13 +347,13 @@ export function AvatarUpload({
                 )}
               </div>
 
-              <button
+              <Button
                 type="button"
                 onClick={() => setIsCropOpen(false)}
-                className="rounded-xl border border-border px-3 py-1.5 text-sm font-bold hover:bg-muted"
+                size="sm"
               >
                 Закрыть
-              </button>
+              </Button>
             </div>
 
             <div className="mt-6 flex justify-center">
@@ -412,24 +406,22 @@ export function AvatarUpload({
             </div>
 
             <div className="mt-6 flex justify-end gap-3">
-              <button
+              <Button
                 type="button"
                 onClick={() => setIsCropOpen(false)}
-                className="rounded-xl border border-border px-5 py-2.5 text-sm font-bold hover:bg-muted"
               >
                 Отмена
-              </button>
+              </Button>
 
-              <button
+              <Button
                 type="button"
                 onClick={commitCrop}
-                className="rounded-xl bg-foreground px-5 py-2.5 text-sm font-bold text-background"
+                variant="solid"
               >
                 Готово
-              </button>
+              </Button>
             </div>
-          </div>
-        </div>
+        </ModalFrame>
       )}
     </div>
   );

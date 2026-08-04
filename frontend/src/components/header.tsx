@@ -3,21 +3,32 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useApp } from "@/providers/AppProvider";
 import { isProfileReadyForDirectory } from "@/lib/profile";
+import { PROFILE_UPDATED_EVENT } from "@/lib/profile-events";
 import { fetchMyProfile, mapApiProfileToDraft } from "@/lib/profiles";
-import { LogIn, LogOut, Menu, X } from "lucide-react";
+import { useEscapeKey } from "@/lib/use-escape-key";
+import { LogIn, Menu, X } from "lucide-react";
+import { getUserDisplayName, getUserInitials } from "@/types/user";
+import { AccountDropdown } from "./header/account-dropdown";
+import { MobileMenu } from "./header/mobile-menu";
+import type { HeaderNavItem } from "./header/types";
 
 export default function Header() {
   const pathname = usePathname();
-  const { isLoggedIn, logout, openLogin } = useApp();
+  const { user, isLoggedIn, logout, openLogin } = useApp();
   const [isProfileReady, setIsProfileReady] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
+  const [accountAvatarUrl, setAccountAvatarUrl] = useState<string | undefined>();
+  const navRef = useRef<HTMLElement>(null);
+  const accountMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!isLoggedIn) {
       setIsProfileReady(false);
+      setAccountAvatarUrl(undefined);
       return;
     }
 
@@ -29,23 +40,74 @@ export default function Header() {
         const draft = mapApiProfileToDraft(api);
         if (!cancelled) {
           setIsProfileReady(isProfileReadyForDirectory(draft));
+          setAccountAvatarUrl(draft.avatarUrl);
         }
       } catch {
-        if (!cancelled) setIsProfileReady(false);
+        if (!cancelled) {
+          setIsProfileReady(false);
+          setAccountAvatarUrl(undefined);
+        }
       }
     }
 
     loadStatus();
+
+    function handleProfileUpdated() {
+      void loadStatus();
+    }
+
+    window.addEventListener(PROFILE_UPDATED_EVENT, handleProfileUpdated);
+
     return () => {
       cancelled = true;
+      window.removeEventListener(PROFILE_UPDATED_EVENT, handleProfileUpdated);
     };
   }, [isLoggedIn, pathname]);
 
   useEffect(() => {
     setIsMenuOpen(false);
+    setIsAccountMenuOpen(false);
   }, [pathname, isLoggedIn]);
 
-  const navItems = [
+  useEscapeKey(isMenuOpen || isAccountMenuOpen, () => {
+    setIsMenuOpen(false);
+    setIsAccountMenuOpen(false);
+  });
+
+  useEffect(() => {
+    if (!isMenuOpen) return;
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (navRef.current?.contains(target)) return;
+
+      setIsMenuOpen(false);
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [isMenuOpen]);
+
+  useEffect(() => {
+    if (!isAccountMenuOpen) return;
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (accountMenuRef.current?.contains(target)) return;
+
+      setIsAccountMenuOpen(false);
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [isAccountMenuOpen]);
+
+  const accountName = user ? getUserDisplayName(user) : "";
+  const accountInitials = user ? getUserInitials(user) : "";
+
+  const navItems: HeaderNavItem[] = [
     { href: "/", label: "Приветствие" },
     { href: "/project", label: "О проекте" },
     ...(isLoggedIn ? [{ href: "/members", label: "Участники" }] : []),
@@ -55,7 +117,7 @@ export default function Header() {
     const isActive = pathname === href;
 
     return [
-      "inline-flex h-9 cursor-pointer items-center whitespace-nowrap rounded-md px-3 text-sm font-medium no-underline transition-colors",
+      "inline-flex h-9 cursor-pointer items-center whitespace-nowrap rounded-md px-3 text-base font-medium no-underline transition-colors",
       isActive
         ? "bg-header-active-bg !text-header-active-text"
         : "!text-header-link hover:bg-header-hover-bg hover:!text-header-link-hover",
@@ -66,7 +128,7 @@ export default function Header() {
     const isActive = pathname === href;
 
     return [
-      "block rounded-xl px-3 py-2 text-sm font-bold no-underline transition-colors",
+      "block rounded-xl px-3 py-2 text-base no-underline transition-colors",
       isActive
         ? "bg-header-active-bg !text-header-active-text"
         : "!text-header-link hover:bg-header-hover-bg hover:!text-header-link-hover",
@@ -75,8 +137,8 @@ export default function Header() {
 
   return (
     <header className="fixed left-0 top-0 z-40 h-14 w-full bg-header-bg text-header-link-hover">
-      <nav className="relative mx-auto h-full w-full px-4">
-        <div className="grid h-full grid-cols-[1fr_auto] items-center gap-4 min-[900px]:grid-cols-[auto_minmax(0,1fr)_auto]">
+      <nav ref={navRef} className="relative mx-auto h-full w-full px-4">
+        <div className="grid h-full grid-cols-[1fr_auto] items-center gap-4 min-[900px]:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
           <div className="flex items-center justify-start">
             <Link
               href="/"
@@ -108,34 +170,30 @@ export default function Header() {
 
           <div className="hidden items-center justify-end gap-2 min-[900px]:flex">
             {isLoggedIn ? (
-              <>
-                <Link href="/profile" className={getLinkClassName("/profile")}>
-                  <span className="flex items-center gap-2">
-                    <span>Профиль</span>
-                    {!isProfileReady && (
-                      <span className="rounded-full bg-header-link-hover px-2 text-[10px] uppercase tracking-wide text-header-bg">
-                        заполнить
-                      </span>
-                    )}
-                  </span>
-                </Link>
-                <button
-                  type="button"
-                  onClick={() => {
+              <div ref={accountMenuRef} className="relative flex h-10 items-center">
+                <AccountDropdown
+                  avatarUrl={accountAvatarUrl}
+                  name={accountName}
+                  initials={accountInitials}
+                  email={user?.email}
+                  isOpen={isAccountMenuOpen}
+                  isProfileReady={isProfileReady}
+                  onToggle={() =>
+                    setIsAccountMenuOpen((current) => !current)
+                  }
+                  onLogout={() => {
+                    setIsAccountMenuOpen(false);
                     void logout();
                   }}
-                  className="button-flat inline-flex h-9 cursor-pointer items-center gap-2 whitespace-nowrap rounded-md px-3 text-sm font-medium !text-header-link transition-colors hover:bg-header-hover-bg hover:!text-header-link-hover"
-                >
-                  <span>Выйти</span>
-                  <LogOut size={16} />
-                </button>
-              </>
+                  getMenuLinkClassName={getMobileLinkClassName}
+                />
+              </div>
             ) : (
               <>
                 <button
                   type="button"
                   onClick={() => openLogin("login")}
-                  className="button-flat inline-flex h-9 cursor-pointer items-center gap-2 whitespace-nowrap rounded-md px-3 text-sm font-medium !text-header-link transition-colors hover:bg-header-hover-bg hover:!text-header-link-hover"
+                  className="button-flat inline-flex h-9 cursor-pointer items-center gap-2 whitespace-nowrap rounded-md px-3 text-base font-medium !text-header-link transition-colors hover:bg-header-hover-bg hover:!text-header-link-hover"
                 >
                   <span>Войти</span>
                   <LogIn size={16} />
@@ -143,7 +201,7 @@ export default function Header() {
                 <button
                   type="button"
                   onClick={() => openLogin("register")}
-                  className="button-flat h-9 cursor-pointer whitespace-nowrap rounded-md px-3 text-sm font-medium !text-header-link transition-colors hover:bg-header-hover-bg hover:!text-header-link-hover"
+                  className="button-flat h-9 cursor-pointer whitespace-nowrap rounded-md px-3 text-base font-medium !text-header-link transition-colors hover:bg-header-hover-bg hover:!text-header-link-hover"
                 >
                   Зарегистрироваться
                 </button>
@@ -165,74 +223,28 @@ export default function Header() {
         </div>
 
         {isMenuOpen && (
-          <div className="absolute left-4 right-4 top-full mt-3 rounded-2xl border border-header-link/20 bg-header-bg p-3 shadow-2xl min-[900px]:hidden">
-            <div className="grid gap-1">
-              {navItems.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={getMobileLinkClassName(item.href)}
-                >
-                  {item.label}
-                </Link>
-              ))}
-
-              <div className="my-2 h-px bg-header-link/20" />
-
-              {isLoggedIn ? (
-                <>
-                  <Link
-                    href="/profile"
-                    className={getMobileLinkClassName("/profile")}
-                  >
-                    <span className="flex items-center justify-between gap-3">
-                      <span>Профиль</span>
-                      {!isProfileReady && (
-                        <span className="rounded-full bg-header-link-hover px-2 text-[10px] uppercase tracking-wide text-header-bg">
-                          заполнить
-                        </span>
-                      )}
-                    </span>
-                  </Link>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsMenuOpen(false);
-                      void logout();
-                    }}
-                    className="button-flat inline-flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold !text-header-link transition-colors hover:bg-header-hover-bg hover:!text-header-link-hover"
-                  >
-                    <span>Выйти</span>
-                    <LogOut size={16} />
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsMenuOpen(false);
-                      openLogin("login");
-                    }}
-                    className="button-flat inline-flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold !text-header-link transition-colors hover:bg-header-hover-bg hover:!text-header-link-hover"
-                  >
-                    <span>Войти</span>
-                    <LogIn size={16} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsMenuOpen(false);
-                      openLogin("register");
-                    }}
-                    className="button-flat cursor-pointer rounded-xl px-3 py-2 text-left text-sm font-bold !text-header-link transition-colors hover:bg-header-hover-bg hover:!text-header-link-hover"
-                  >
-                    Зарегистрироваться
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
+          <MobileMenu
+            avatarUrl={accountAvatarUrl}
+            name={accountName}
+            initials={accountInitials}
+            email={user?.email}
+            isLoggedIn={isLoggedIn}
+            isProfileReady={isProfileReady}
+            navItems={navItems}
+            onLogin={() => {
+              setIsMenuOpen(false);
+              openLogin("login");
+            }}
+            onRegister={() => {
+              setIsMenuOpen(false);
+              openLogin("register");
+            }}
+            onLogout={() => {
+              setIsMenuOpen(false);
+              void logout();
+            }}
+            getMenuLinkClassName={getMobileLinkClassName}
+          />
         )}
       </nav>
     </header>

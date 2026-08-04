@@ -9,7 +9,7 @@ export default function Footer() {
         color: "var(--color-header-link-hover)",
       }}
     >
-      <div className="mx-auto flex flex-col flex-wrap items-center justify-center gap-x-8 gap-y-2 px-4 text-center min-[900px]:flex-row">
+      <div className="mx-auto flex flex-col flex-wrap items-center justify-center gap-x-8 gap-y-2 px-4 text-center text-sm min-[900px]:flex-row">
         <span>
           Cheremushki © 2026. Все права защищены.
         </span>

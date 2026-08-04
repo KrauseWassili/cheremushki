@@ -5,6 +5,9 @@ import { hasVisibleContactActions } from "@/lib/member-contact";
 import { sendContactRequest } from "@/lib/profiles";
 import { ApiError } from "@/lib/api";
 import { useEscapeKey } from "@/lib/use-escape-key";
+import { Button, buttonClassName } from "@/components/ui/button";
+import { TextArea } from "@/components/ui/text-field";
+import { ModalFrame } from "@/components/ui/modal";
 import type { MemberProfile } from "@/types/member";
 
 type MemberContactActionsProps = {
@@ -22,9 +25,9 @@ export function MemberContactActions({
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
 
-  const buttonClassName = compact
-    ? "rounded-xl border border-border px-4 py-2 text-sm font-bold transition hover:bg-muted"
-    : "rounded-xl border border-border px-4 py-2.5 text-sm font-bold transition hover:bg-muted";
+  const actionButtonClassName = buttonClassName({
+    size: compact ? "sm" : "md",
+  });
 
   useEscapeKey(isRequestOpen, () => setIsRequestOpen(false));
 
@@ -50,7 +53,7 @@ export function MemberContactActions({
         href={member.telegramGroupUrl}
         target="_blank"
         rel="noreferrer"
-        className={buttonClassName}
+        className={actionButtonClassName}
       >
         Написать в Telegram-группе
       </a>
@@ -60,41 +63,39 @@ export function MemberContactActions({
   if (member.contactMode === "request") {
     return (
       <>
-        <button
+        <Button
           type="button"
+          size={compact ? "sm" : "md"}
           onClick={() => {
             setIsRequestOpen(true);
             setIsRequestSent(false);
             setSendError(null);
           }}
-          className={buttonClassName}
         >
           Запросить контакт
-        </button>
+        </Button>
 
         {isRequestOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4 backdrop-blur-sm">
+          <ModalFrame label="Запрос контакта" className="max-w-lg">
             <div
-              role="dialog"
-              aria-modal="true"
+              className="contents"
               aria-label="Запрос контакта"
-              className="w-full max-w-lg rounded-2xl border border-border bg-bg p-6 shadow-2xl"
             >
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <h3 className="text-xl font-black">Запрос контакта</h3>
+                  <h3 className="text-xl font-bold">Запрос контакта</h3>
                   <p className="mt-1 text-sm text-muted-foreground">
                     Сообщение будет отправлено участнику по email.
                   </p>
                 </div>
 
-                <button
+                <Button
                   type="button"
                   onClick={() => setIsRequestOpen(false)}
-                  className="rounded-xl border border-border px-3 py-1.5 text-sm font-bold hover:bg-muted"
+                  size="sm"
                 >
                   Закрыть
-                </button>
+                </Button>
               </div>
 
               {isRequestSent ? (
@@ -103,11 +104,11 @@ export function MemberContactActions({
                 </p>
               ) : (
                 <>
-                  <textarea
+                  <TextArea
                     value={requestText}
                     onChange={(event) => setRequestText(event.target.value)}
                     placeholder={`Коротко напишите, зачем хотите связаться с ${member.fullName}`}
-                    className="mt-5 min-h-36 w-full rounded-xl border border-border bg-input-background px-3 py-3 shadow-inner outline-none focus:border-foreground/40 focus:ring-4 focus:ring-foreground/5"
+                    className="mt-5 min-h-36"
                   />
 
                   {sendError && (
@@ -115,15 +116,14 @@ export function MemberContactActions({
                   )}
 
                   <div className="mt-4 flex justify-end gap-3">
-                    <button
+                    <Button
                       type="button"
                       onClick={() => setIsRequestOpen(false)}
-                      className="rounded-xl border border-border px-4 py-2.5 text-sm font-bold hover:bg-muted"
                     >
                       Отмена
-                    </button>
+                    </Button>
 
-                    <button
+                    <Button
                       type="button"
                       disabled={!requestText.trim() || isSending}
                       onClick={async () => {
@@ -145,15 +145,15 @@ export function MemberContactActions({
                           setIsSending(false);
                         }
                       }}
-                      className="rounded-xl bg-foreground px-4 py-2.5 text-sm font-bold text-background disabled:opacity-50"
+                      variant="solid"
                     >
                       {isSending ? "Отправка…" : "Отправить запрос"}
-                    </button>
+                    </Button>
                   </div>
                 </>
               )}
             </div>
-          </div>
+          </ModalFrame>
         )}
       </>
     );
@@ -166,7 +166,7 @@ export function MemberContactActions({
   return (
     <div className="flex flex-wrap gap-3">
       {member.email && (
-        <a href={`mailto:${member.email}`} className={buttonClassName}>
+        <a href={`mailto:${member.email}`} className={actionButtonClassName}>
           Email
         </a>
       )}
@@ -176,7 +176,7 @@ export function MemberContactActions({
           href={`https://t.me/${member.telegramUsername.replace(/^@/, "")}`}
           target="_blank"
           rel="noreferrer"
-          className={buttonClassName}
+          className={actionButtonClassName}
         >
           Telegram
         </a>
@@ -187,7 +187,7 @@ export function MemberContactActions({
           href={member.linkedinUrl}
           target="_blank"
           rel="noreferrer"
-          className={buttonClassName}
+          className={actionButtonClassName}
         >
           LinkedIn
         </a>
@@ -198,7 +198,7 @@ export function MemberContactActions({
           href={member.websiteUrl}
           target="_blank"
           rel="noreferrer"
-          className={buttonClassName}
+          className={actionButtonClassName}
         >
           Сайт
         </a>

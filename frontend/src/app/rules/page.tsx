@@ -3,8 +3,8 @@
 export default function RulesPage() {
   return (
     <main className="mx-auto w-full max-w-3xl py-4">
-      <header className="mx-auto mb-10 max-w-3xl text-center">
-        <h1 className="mt-3 text-4xl font-black tracking-tight">
+      <header className="text-page-header mx-auto mb-10 max-w-3xl text-center">
+        <h1 className="mt-3 text-4xl font-bold tracking-tight">
           Правила и условия участия
         </h1>
 
@@ -20,7 +20,7 @@ export default function RulesPage() {
       </header>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">1. Общение</h2>
+        <h2 className="section-block__title font-bold">1. Общение</h2>
 
         <p className="section-block__text">
           В клубе можно спорить, не соглашаться и обсуждать сложные темы. При
@@ -62,7 +62,7 @@ export default function RulesPage() {
       </section>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">
+        <h2 className="section-block__title font-bold">
           2. Взаимная помощь и самопрезентация
         </h2>
 
@@ -84,7 +84,7 @@ export default function RulesPage() {
       </section>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">3. Приватность</h2>
+        <h2 className="section-block__title font-bold">3. Приватность</h2>
 
         <p className="section-block__text">
           Не публикуйте за пределами клуба чужие сообщения, фотографии, контактные
@@ -104,7 +104,7 @@ export default function RulesPage() {
       </section>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">4. Вступление</h2>
+        <h2 className="section-block__title font-bold">4. Вступление</h2>
 
         <p className="section-block__text">
           Для вступления необходимо пройти процедуру регистрации, активировать
@@ -121,7 +121,7 @@ export default function RulesPage() {
       </section>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">
+        <h2 className="section-block__title font-bold">
           5. Ответственность участников
         </h2>
 
@@ -149,7 +149,7 @@ export default function RulesPage() {
       </section>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">6. Модерация</h2>
+        <h2 className="section-block__title font-bold">6. Модерация</h2>
 
         <p className="section-block__text">
           Модерация нужна для сохранения <em>спокойной и доброжелательной атмосферы</em>,
@@ -188,7 +188,7 @@ export default function RulesPage() {
       </section>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">
+        <h2 className="section-block__title font-bold">
           7. Прекращение участия
         </h2>
 
@@ -212,7 +212,7 @@ export default function RulesPage() {
       </section>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">8. Изменение правил</h2>
+        <h2 className="section-block__title font-bold">8. Изменение правил</h2>
 
         <p className="section-block__text">
           Правила могут уточняться по мере развития клуба. Актуальная редакция

@@ -5,6 +5,7 @@ import {Loader2, X} from "lucide-react";
 import {ApiError, type ApiFieldErrors} from "@/lib/api";
 import {requestPasswordReset} from "@/lib/auth";
 import {useEscapeKey} from "@/lib/use-escape-key";
+import { Button } from "@/components/ui/button";
 
 interface LoginModalProps {
     initialMode?: "login" | "register";
@@ -154,14 +155,15 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                 className="bg-bg border border-border rounded-2xl w-full max-w-md shadow-2xl"
             >
                 <div className="flex justify-end p-6 border-b border-border">
-                        <button
+                        <Button
                             type="button"
                             onClick={onClose}
-                            className="button-gray-rounded"
+                            variant="primary"
+                            size="sm"
                             disabled={isSubmitting}
                         >
                             <X size={18}/>
-                        </button>
+                        </Button>
                     </div>
                     {/* Tab switcher */}
                     <div className="flex border-b border-border">
@@ -243,10 +245,12 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                                 </div>
                             )}
 
-                            <button
+                            <Button
                                 type="submit"
                                 disabled={isSubmitting}
-                                className="button-gray-rounded w-full py-3 flex items-center justify-center gap-2"
+                                variant="primary"
+                                size="lg"
+                                className="w-full"
                                 style={{fontFamily: "var(--font-display)"}}
                             >
                                 {isSubmitting ? (
@@ -257,7 +261,7 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                                 ) : (
                                     "Войти"
                                 )}
-                            </button>
+                            </Button>
                             <p className="text-center text-muted-foreground text-xs">
                                 Нет аккаунта?{" "}
                                 <a href="#"
@@ -315,10 +319,12 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                                 </div>
                             )}
 
-                            <button
+                            <Button
                                 type="submit"
                                 disabled={isSubmitting || !resetEmail.trim()}
-                                className="button-gray-rounded w-full py-3 flex items-center justify-center gap-2"
+                                variant="primary"
+                                size="lg"
+                                className="w-full"
                                 style={{fontFamily: "var(--font-display)"}}
                             >
                                 {isSubmitting ? (
@@ -329,7 +335,7 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                                 ) : (
                                     "Отправить ссылку"
                                 )}
-                            </button>
+                            </Button>
 
                             <p className="text-center text-muted-foreground text-xs">
                                 Вспомнили пароль?{" "}
@@ -350,13 +356,15 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                                     <div className="rounded-lg border border-border bg-muted/40 p-4 text-sm leading-6 text-foreground">
                                         {registerSuccess}
                                     </div>
-                                    <button
+                                    <Button
                                         type="button"
                                         onClick={() => switchMode("login")}
-                                        className="button-gray-rounded w-full py-3"
+                                        variant="primary"
+                                        size="lg"
+                                        className="w-full"
                                     >
                                         Перейти ко входу
-                                    </button>
+                                    </Button>
                                 </div>
                             ) : (
                                 <>
@@ -473,10 +481,12 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                                 </div>
                             )}
 
-                            <button
+                            <Button
                                 type="submit"
                                 disabled={isSubmitting}
-                                className="button-gray-rounded w-full py-3 flex items-center justify-center gap-2"
+                                variant="primary"
+                                size="lg"
+                                className="w-full"
                                 style={{fontFamily: "var(--font-display)"}}
                             >
                                 {isSubmitting ? (
@@ -487,7 +497,7 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                                 ) : (
                                     "Создать аккаунт"
                                 )}
-                            </button>
+                            </Button>
                                 </>
                             )}
                         </form>

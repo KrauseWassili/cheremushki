@@ -12,7 +12,11 @@ import Link from "next/link";
 import { useApp } from "@/providers/AppProvider";
 import { AvatarUpload } from "@/components/members/avatar-upload";
 import { CustomSelect } from "@/components/ui/custom-select";
+import { buttonClassName } from "@/components/ui/button";
+import { fieldClassName } from "@/components/ui/text-field";
+import { ModalFrame } from "@/components/ui/modal";
 import { ApiError } from "@/lib/api";
+import { notifyProfileUpdated } from "@/lib/profile-events";
 import { useEscapeKey } from "@/lib/use-escape-key";
 import {
   changePassword,
@@ -182,6 +186,7 @@ export default function ProfilePage() {
         }),
       );
       setSaved(true);
+      notifyProfileUpdated();
       setSaveSuccess("Аватар успешно загружен.");
     } catch (err) {
       setSaveError(
@@ -221,10 +226,11 @@ export default function ProfilePage() {
         }),
       );
       setSaved(true);
+      notifyProfileUpdated();
       setSaveSuccess(
         api.is_directory_visible
           ? "Профиль сохранён и виден в каталоге участников."
-          : "Профиль сохранён. Заполните все обязательные поля и загрузите аватар, чтобы появиться в каталоге.",
+          : "Профиль сохранён. Заполните все обязательные поля и загрузите аватар, чтобы ваш профиль появился в каталоге.",
       );
     } catch (err) {
       setSaveError(
@@ -267,7 +273,7 @@ export default function ProfilePage() {
           <p className="mb-4 text-2xl font-semibold text-foreground">
             Вы не вошли в систему :(
           </p>
-          <Link href="/" className="button-gray-rounded">
+          <Link href="/" className={buttonClassName()}>
             На главную
           </Link>
         </div>
@@ -279,7 +285,7 @@ export default function ProfilePage() {
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 py-6">
       <section className="rounded-3xl border border-border bg-background p-6 shadow-sm">
         <div>
-          <h1 className="text-3xl font-black">Профиль</h1>
+          <h1 className="text-3xl font-bold">Профиль</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             Заполните основные поля, чтобы профиль появился в каталоге
             участников.
@@ -293,7 +299,7 @@ export default function ProfilePage() {
       <section className="rounded-3xl border border-border bg-background p-6 shadow-sm">
         <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h2 className="text-xl font-black">Данные аккаунта</h2>
+            <h2 className="text-xl font-bold">Данные аккаунта</h2>
             <p className="mt-1 text-sm text-muted-foreground">
               Эти данные относятся к учетной записи и здесь показываются только
               для просмотра.
@@ -363,7 +369,7 @@ export default function ProfilePage() {
       <section className="rounded-3xl border border-border bg-background p-6 shadow-sm">
         <div className="mb-6 flex items-center justify-between gap-3">
           <div>
-            <h2 className="text-xl font-black">Основные данные</h2>
+            <h2 className="text-xl font-bold">Основные данные</h2>
             <p className="mt-1 text-sm text-muted-foreground">
               Эти поля нужны для минимального профиля.
             </p>
@@ -472,7 +478,7 @@ export default function ProfilePage() {
       </section>
 
       <section className="rounded-3xl border border-border bg-background p-6 shadow-sm">
-        <h2 className="text-xl font-black">Дополнительно</h2>
+        <h2 className="text-xl font-bold">Дополнительно</h2>
         <div className="mt-5 grid gap-5 min-[900px]:grid-cols-2">
           <label className="grid gap-2 min-[900px]:col-span-2">
             <span className="font-bold">Как с вами связываться</span>
@@ -572,13 +578,16 @@ export default function ProfilePage() {
           </label>
 
           <label className="grid gap-2 min-[900px]:col-span-2">
-            <span className="font-bold">Направления</span>
+            <span className="font-bold">Ключевые слова</span>
             <input
               value={draft.tags}
               onChange={(event) => updateField("tags", event.target.value)}
               placeholder="Через запятую: дизайн, Python, карьера"
               className={getEditableFieldClassName()}
             />
+            <span className="text-xs leading-5 text-muted-foreground">
+              Данные слова помогут найти вас в каталоге и Telegram-группе.
+            </span>
           </label>
         </div>
       </section>
@@ -644,16 +653,14 @@ function AccountSettingsModal({
   onDeleteAccount: (password: string) => Promise<void>;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4 backdrop-blur-sm">
+    <ModalFrame label="Настройки аккаунта" className="max-w-lg">
       <div
-        role="dialog"
-        aria-modal="true"
         aria-label="Настройки аккаунта"
-        className="w-full max-w-lg rounded-2xl border border-border bg-bg p-6 shadow-2xl"
+        className="contents"
       >
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h3 className="text-xl font-black">Настройки аккаунта</h3>
+            <h3 className="text-xl font-bold">Настройки аккаунта</h3>
           </div>
 
           <button
@@ -716,7 +723,7 @@ function AccountSettingsModal({
           )}
         </div>
       </div>
-    </div>
+    </ModalFrame>
   );
 }
 
@@ -799,7 +806,7 @@ function NameSettingsForm({
       >
         ← Назад
       </button>
-      <h4 className="text-lg font-black">Изменить имя и фамилию</h4>
+      <h4 className="text-lg font-bold">Изменить имя и фамилию</h4>
       <div className="mt-4 grid gap-4 min-[900px]:grid-cols-2">
         <label className="grid gap-2">
           <span className="text-sm font-bold">Имя</span>
@@ -898,7 +905,7 @@ function EmailSettingsForm({
       >
         ← Назад
       </button>
-      <h4 className="text-lg font-black">Изменить почту</h4>
+      <h4 className="text-lg font-bold">Изменить почту</h4>
       <div className="mt-4 grid gap-4">
         <FormField label="Текущая почта" defaultValue={draft.email} readOnly />
         <label className="grid gap-2">
@@ -973,7 +980,7 @@ function PasswordSettingsForm({ onBack }: { onBack: () => void }) {
   return (
     <form onSubmit={handleSubmit}>
       <AccountSettingsBackButton onBack={onBack} />
-      <h4 className="text-lg font-black">Изменить пароль</h4>
+      <h4 className="text-lg font-bold">Изменить пароль</h4>
       <div className="mt-4 grid gap-4">
         <label className="grid gap-2">
           <span className="text-sm font-bold">Текущий пароль</span>
@@ -1059,7 +1066,7 @@ function DeleteAccountSettingsForm({
   return (
     <form onSubmit={handleSubmit}>
       <AccountSettingsBackButton onBack={onBack} />
-      <h4 className="text-lg font-black">Удалить аккаунт</h4>
+      <h4 className="text-lg font-bold">Удалить аккаунт</h4>
       <div className="mt-4 grid gap-4">
         <p className="rounded-xl border border-destructive/30 bg-danger-soft px-3 py-3 text-sm leading-6 text-destructive">
           После подтверждения аккаунт будет деактивирован, а профиль скрыт из каталога.
@@ -1185,22 +1192,11 @@ function getReadOnlyAccountFieldClassName() {
 }
 
 function getEditableFieldClassName(multiline = false) {
-  return [
-    multiline
-      ? "min-h-28 rounded-xl border px-3 py-3"
-      : "h-11 rounded-xl border px-3",
-    "border-border bg-input-background text-foreground shadow-inner",
-    "focus:border-foreground/40 focus:outline-none focus:ring-4 focus:ring-foreground/5",
-  ].join(" ");
+  return fieldClassName({ multiline });
 }
 
 function getSecondaryButtonClassName(danger = false) {
-  return [
-    "rounded-xl border px-4 py-2.5 text-sm font-bold transition disabled:opacity-60",
-    danger
-      ? "border-destructive/30 text-destructive hover:bg-danger-soft"
-      : "border-border text-foreground hover:bg-muted",
-  ].join(" ");
+  return buttonClassName({ variant: danger ? "danger" : "secondary" });
 }
 
 function getRequiredFieldClassName(value: string, multiline = false) {

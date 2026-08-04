@@ -53,7 +53,7 @@ export default function RootLayout({
           <ScrollToTop />
           <main
             id={APP_SCROLL_CONTAINER_ID}
-            className="flex-1 min-h-0 overflow-auto pt-14 pb-32 min-[900px]:pb-20"
+            className="flex-1 min-h-0 overflow-auto pt-14 pb-32 [scrollbar-gutter:stable] min-[900px]:pb-20"
           >
             <div className="mx-auto w-full max-w-3xl px-4">
               {children}

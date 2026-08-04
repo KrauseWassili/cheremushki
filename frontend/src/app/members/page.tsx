@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { MemberDirectory } from "@/components/members/member-directory";
+import { Button } from "@/components/ui/button";
 import { LoadingState } from "@/components/ui/loading-state";
 import { useApp } from "@/providers/AppProvider";
 import { fetchMemberProfiles } from "@/lib/profiles";
@@ -57,17 +58,18 @@ export default function MembersPage() {
   if (!isLoggedIn) {
     return (
       <main className="mx-auto w-full max-w-lg py-16 text-center">
-        <h1 className="text-3xl font-black">Участники</h1>
+        <h1 className="text-3xl font-bold">Участники</h1>
         <p className="mt-4 text-muted-foreground">
           Войдите в аккаунт, чтобы видеть каталог участников.
         </p>
-        <button
+        <Button
           type="button"
           onClick={() => openLogin("login")}
-          className="button-gray-rounded mt-6"
+          variant="primary"
+          className="mt-6"
         >
           Войти
-        </button>
+        </Button>
       </main>
     );
   }
@@ -75,7 +77,7 @@ export default function MembersPage() {
   return (
     <main className="mx-auto w-full max-w-3xl py-4">
       <header className="mx-auto mb-10 max-w-3xl text-center">
-        <h1 className="mt-3 text-4xl font-black tracking-tight">
+        <h1 className="mt-3 text-4xl font-bold tracking-tight">
           Участники
         </h1>
         <p className="mt-5 text-base leading-7 text-muted-foreground">

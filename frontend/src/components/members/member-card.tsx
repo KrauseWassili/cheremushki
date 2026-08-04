@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { MapPin } from "lucide-react";
 import { getContactModeLabel } from "@/lib/member-contact";
+import { buttonClassName } from "@/components/ui/button";
 import type { MemberProfile } from "@/types/member";
 
 type MemberCardProps = {
@@ -44,16 +45,16 @@ export function MemberCard({ member }: MemberCardProps) {
             <div>
               <Link
                 href={`/members/${member.slug}`}
-                className="text-xl font-black text-ink hover:text-link hover:underline"
+                className="text-lg font-bold text-accent hover:text-link hover:underline"
               >
                 {member.fullName}
               </Link>
 
-              <p className="mt-1 text-base font-semibold text-primary">
+              <p className="mb-0 mt-1 text-base font-semibold leading-6 text-heading">
                 {member.headline}
               </p>
 
-              <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+              <p className="mb-0 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm leading-5 text-muted-foreground">
                 <span className="inline-flex items-center gap-1">
                   <MapPin size={14} aria-hidden />
                   {member.city}
@@ -69,12 +70,12 @@ export function MemberCard({ member }: MemberCardProps) {
             </span>
           </div>
 
-          <p className="mt-4 line-clamp-3 text-sm leading-6 text-muted-foreground">
+          <p className="mb-0 mt-3 line-clamp-3 text-sm leading-6 text-body">
             {member.bio}
           </p>
 
           {member.tags.length > 0 && (
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div className="mt-3 flex flex-wrap gap-2">
               {member.tags.slice(0, 5).map((tag) => (
                 <span
                   key={tag}
@@ -86,31 +87,31 @@ export function MemberCard({ member }: MemberCardProps) {
             </div>
           )}
 
-          <div className="mt-5 grid gap-4">
+          <div className="mt-4 grid gap-3">
             <div>
-              <p className="text-xs font-bold uppercase tracking-wide text-accent">
+              <p className="mb-0 text-xs font-bold uppercase tracking-wide text-heading">
                 Могу помочь
               </p>
-              <p className="mt-1 text-sm leading-6 text-body">
+              <p className="mb-0 mt-1 text-sm leading-6 text-body">
                 {member.canHelpWith}
               </p>
             </div>
 
             <div>
-              <p className="text-xs font-bold uppercase tracking-wide text-accent">
+              <p className="mb-0 text-xs font-bold uppercase tracking-wide text-heading">
                 Сейчас интересно
               </p>
-              <p className="mt-1 text-sm leading-6 text-body">
+              <p className="mb-0 mt-1 text-sm leading-6 text-body">
                 {member.lookingFor}
               </p>
             </div>
           </div>
 
-          <div className="mt-5">
+          <div className="mt-4">
             <div className="flex flex-wrap gap-3">
               <Link
                 href={`/members/${member.slug}`}
-                className="inline-flex rounded-xl border border-border px-4 py-2 text-sm font-bold transition hover:bg-muted"
+                className={buttonClassName({ size: "sm" })}
               >
                 Открыть профиль
               </Link>

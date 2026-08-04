@@ -39,7 +39,7 @@ export default function Home() {
           </div>
         </section>
         <section className="section-block home-intro-teaser text-foreground font-sans">
-          <p className="section-block__text flex justify-center font-black text-primary">
+          <p className="section-block__text flex justify-center font-bold text-primary">
             Не знаете, зачем всё это и с чего начать?
           </p>
 
@@ -60,7 +60,7 @@ export default function Home() {
         </section>
       </div>
       <section id="about" className="section-block text-foreground font-sans">
-        <h2 className="section-block__title font-black">Зачем нужен клуб</h2>
+        <h2 className="section-block__title font-bold">Зачем нужен клуб</h2>
 
         <p className="section-block__text">
           Вы с рождения живёте в Германии или только недавно сюда приехали? В
@@ -80,7 +80,7 @@ export default function Home() {
       </section>
 
       <section className="section-block text-foreground font-sans">
-        <h2 className="section-block__title font-black">
+        <h2 className="section-block__title font-bold">
           Что происходит внутри
         </h2>
 
@@ -102,7 +102,7 @@ export default function Home() {
       </section>
 
       <section className="section-block text-foreground font-sans">
-        <h2 className="section-block__title font-black">Как всё устроено</h2>
+        <h2 className="section-block__title font-bold">Как всё устроено</h2>
 
         <ol className="ml-5 list-decimal space-y-3 text-lg leading-8 text-body marker:text-accent">
           <li>Пройдите процедуру регистрации и активируйте аккаунт по ссылке из письма.</li>
@@ -117,7 +117,7 @@ export default function Home() {
       </section>
 
       <section className="section-block text-foreground font-sans">
-        <h2 className="section-block__title font-black">
+        <h2 className="section-block__title font-bold">
           На чём держится сообщество
         </h2>
 
@@ -152,7 +152,7 @@ export default function Home() {
       </section>
 
       <section className="section-block text-foreground font-sans">
-        <h2 className="section-block__title font-black">
+        <h2 className="section-block__title font-bold">
           Хотите присоединиться?
         </h2>
 
