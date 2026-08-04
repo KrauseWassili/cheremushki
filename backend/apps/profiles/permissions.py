@@ -3,7 +3,7 @@ from rest_framework.permissions import BasePermission
 
 class IsActiveAuthenticated(BasePermission):
     """
-    Nur eingeloggte und aktivierte Nutzer (Telegram-Gate bestanden).
+    Nur eingeloggte und aktivierte Nutzer (E-Mail-Aktivierung bestanden).
     """
 
     def has_permission(self, request, view):

@@ -12,6 +12,21 @@ class TelegramInvite(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     used_at = models.DateTimeField(null=True, blank=True)
 
+    telegram_user_id = models.BigIntegerField(
+        null=True,
+        blank=True,
+        unique=True,
+        help_text="Telegram-User-ID; pro Club-Account nur einmal erlaubt.",
+    )
+    profile_message_id = models.BigIntegerField(null=True, blank=True)
+    profile_chat_id = models.CharField(max_length=64, blank=True, default="")
+    profile_thread_id = models.BigIntegerField(null=True, blank=True)
+    profile_photo_file_id = models.CharField(max_length=255, blank=True, default="")
+    profile_posted_at = models.DateTimeField(null=True, blank=True)
+    profile_synced_at = models.DateTimeField(null=True, blank=True)
+    reminder_count = models.PositiveSmallIntegerField(default=0)
+    last_reminder_at = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         verbose_name = "Telegram Einladung"
         verbose_name_plural = "Telegram Einladungen"
