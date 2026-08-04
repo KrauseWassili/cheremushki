@@ -165,6 +165,10 @@ TELEGRAM_PEOPLE_TOPIC_NAME = env.str(
     "TELEGRAM_PEOPLE_TOPIC_NAME", default="Наши люди"
 )
 TELEGRAM_PEOPLE_TOPIC_ID = env.str("TELEGRAM_PEOPLE_TOPIC_ID", default="")
+# Fallback für Profil-Buttons, wenn FRONTEND_URL kein https ist (Telegram lehnt localhost ab).
+TELEGRAM_PROFILE_URL_BASE = env.str(
+    "TELEGRAM_PROFILE_URL_BASE", default="https://example.com"
+)
 
 # --- Cors ----------------------------------------------------------- #
 CORS_ALLOW_CREDENTIALS = True
