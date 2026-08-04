@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useApp } from "@/providers/AppProvider";
@@ -82,9 +83,12 @@ export default function Header() {
               aria-label="Черемушки"
               className="inline-flex items-center no-underline"
             >
-              <img
-                src="/brand-mark-transparent.webp"
+              <Image
+                src="/brand-mark-header.webp"
                 alt=""
+                width={48}
+                height={48}
+                priority
                 className="size-12 object-contain drop-shadow-[0_3px_3px_color-mix(in_srgb,var(--palette-ink)_90%,transparent)]"
               />
             </Link>

@@ -38,6 +38,10 @@ export function MemberProfileView({
           {member.avatarUrl ? (
             <img
               src={member.avatarUrl}
+              width={128}
+              height={128}
+              fetchPriority="high"
+              decoding="async"
               alt={`Аватар ${member.fullName}`}
               className="size-32 rounded-3xl object-cover"
             />
@@ -64,7 +68,7 @@ export function MemberProfileView({
                 </p>
               </div>
 
-              <span className="rounded-full bg-mint/35 px-3 py-1.5 text-xs font-bold text-primary">
+              <span className="rounded-full bg-mint/35 px-3 py-1.5 text-xs font-bold text-heading">
                 {getContactModeLabel(member)}
               </span>
             </div>
@@ -113,7 +117,7 @@ export function MemberProfileView({
               key={fact.label}
               className="rounded-2xl border border-border bg-muted/30 px-4 py-3"
             >
-              <dt className="text-xs font-bold uppercase tracking-wide text-accent">
+              <dt className="text-xs font-bold uppercase tracking-wide text-link">
                 {fact.label}
               </dt>
               <dd className="mt-1 font-bold text-heading">{fact.value}</dd>

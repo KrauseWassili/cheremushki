@@ -4,6 +4,7 @@ import { useState } from "react";
 import { hasVisibleContactActions } from "@/lib/member-contact";
 import { sendContactRequest } from "@/lib/profiles";
 import { ApiError } from "@/lib/api";
+import { useEscapeKey } from "@/lib/use-escape-key";
 import type { MemberProfile } from "@/types/member";
 
 type MemberContactActionsProps = {
@@ -24,6 +25,8 @@ export function MemberContactActions({
   const buttonClassName = compact
     ? "rounded-xl border border-border px-4 py-2 text-sm font-bold transition hover:bg-muted"
     : "rounded-xl border border-border px-4 py-2.5 text-sm font-bold transition hover:bg-muted";
+
+  useEscapeKey(isRequestOpen, () => setIsRequestOpen(false));
 
   if (member.contactMode === "closed") {
     return (
@@ -71,7 +74,12 @@ export function MemberContactActions({
 
         {isRequestOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4 backdrop-blur-sm">
-            <div className="w-full max-w-lg rounded-2xl border border-border bg-bg p-6 shadow-2xl">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="Запрос контакта"
+              className="w-full max-w-lg rounded-2xl border border-border bg-bg p-6 shadow-2xl"
+            >
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <h3 className="text-xl font-black">Запрос контакта</h3>

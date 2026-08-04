@@ -5,6 +5,7 @@ import {useRouter} from "next/navigation";
 import {
   clearTokens,
   fetchCurrentUser,
+  hasAuthTokens,
   login as loginRequest,
   logoutRequest,
   register as registerRequest,
@@ -57,6 +58,12 @@ export function AppProvider({children}: { children: ReactNode }) {
         let cancelled = false;
 
         async function restoreSession() {
+            if (!hasAuthTokens()) {
+                setUser(null);
+                setAuthLoading(false);
+                return;
+            }
+
             try {
                 const currentUser = await fetchCurrentUser();
                 if (!cancelled) setUser(currentUser);

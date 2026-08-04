@@ -25,6 +25,10 @@ export function MemberCard({ member }: MemberCardProps) {
           {member.avatarUrl ? (
             <img
               src={member.avatarUrl}
+              width={96}
+              height={96}
+              loading="lazy"
+              decoding="async"
               alt={`Аватар ${member.fullName}`}
               className="size-24 rounded-2xl object-cover"
             />
@@ -60,7 +64,7 @@ export function MemberCard({ member }: MemberCardProps) {
               </p>
             </div>
 
-            <span className="h-fit w-fit rounded-full bg-mint/35 px-3 py-1 text-xs font-bold text-primary">
+            <span className="h-fit w-fit rounded-full bg-mint/35 px-3 py-1 text-xs font-bold text-heading">
               {getContactModeLabel(member)}
             </span>
           </div>
