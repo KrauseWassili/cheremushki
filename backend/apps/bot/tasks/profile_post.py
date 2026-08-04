@@ -29,20 +29,34 @@ def sync_telegram_profile_post(self, user_id: int):
     try:
         user = CustomUser.objects.get(pk=user_id)
     except CustomUser.DoesNotExist:
+        logger.warning("sync_telegram_profile_post: user=%s existiert nicht", user_id)
         return
 
     if not user.is_active:
+        logger.info(
+            "sync_telegram_profile_post: user=%s noch nicht aktiv – skip", user_id
+        )
         return
 
     try:
         invite = TelegramInvite.objects.get(user=user, used=True)
     except TelegramInvite.DoesNotExist:
+        logger.info(
+            "sync_telegram_profile_post: user=%s hat noch keinen genutzten "
+            "Telegram-Invite (Gruppe nicht beigetreten) – skip",
+            user_id,
+        )
         return
 
     profile = _get_or_create_profile(user)
 
     try:
         post_or_update_profile_card(profile, invite)
+        logger.info(
+            "sync_telegram_profile_post: user=%s message_id=%s",
+            user_id,
+            invite.profile_message_id,
+        )
     except Exception as exc:
         logger.exception("Profilpost für user=%s fehlgeschlagen", user_id)
         raise self.retry(exc=exc)

@@ -130,6 +130,11 @@ class ActivateAccountViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
 
             user.is_active = True
             user.save(update_fields=["is_active"])
+
+            # Invite-Row sofort anlegen, auch wenn Celery kurz down ist.
+            from apps.bot.models import TelegramInvite
+
+            TelegramInvite.objects.get_or_create(user=user)
             send_telegram_invite_email.delay(user.pk)
             return ("ok", user)
 
