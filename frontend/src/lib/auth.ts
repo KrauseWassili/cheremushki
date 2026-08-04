@@ -254,6 +254,16 @@ export async function confirmPasswordReset(
   });
 }
 
+export async function activateAccount(
+  uid: string,
+  token: string,
+): Promise<{ detail: string; already_active?: boolean }> {
+  return apiFetch("/api/v1/accounts/activate/", {
+    method: "POST",
+    body: JSON.stringify({ uid, token }),
+  });
+}
+
 export async function deleteAccount(password: string): Promise<void> {
   const token = getAccessToken();
   if (!token) throw new Error("Пользователь не авторизован");
