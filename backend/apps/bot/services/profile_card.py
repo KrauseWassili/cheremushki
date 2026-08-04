@@ -19,6 +19,17 @@ def _esc(value: str) -> str:
     return html.escape((value or "").strip())
 
 
+def is_telegram_button_url(url: str) -> bool:
+    """Telegram erlaubt in URL-Buttons nur https (localhost/http werden abgelehnt)."""
+    return url.startswith("https://")
+
+
+def build_profile_url(profile: MemberProfile) -> str:
+    frontend = getattr(settings, "FRONTEND_URL", "http://localhost:3000").rstrip("/")
+    slug = profile.slug or f"member-{profile.user_id}"
+    return f"{frontend}/members/{slug}"
+
+
 def build_profile_caption(profile: MemberProfile) -> str:
     user = profile.user
     name = _esc(user.full_name) or _esc(user.email)
@@ -48,21 +59,27 @@ def build_profile_caption(profile: MemberProfile) -> str:
         f"<b>Теги</b>\n"
         f"{tags_line}"
     )
+
+    # Klickbarer Link nur mit https — Telegram lehnt http/localhost ab.
+    profile_url = build_profile_url(profile)
+    if is_telegram_button_url(profile_url):
+        caption += f"\n\n<a href=\"{_esc(profile_url)}\">Открыть профиль</a>"
+
     return caption[:1024]
 
 
-def build_profile_url(profile: MemberProfile) -> str:
-    frontend = getattr(settings, "FRONTEND_URL", "http://localhost:3000").rstrip("/")
-    slug = profile.slug or f"member-{profile.user_id}"
-    return f"{frontend}/members/{slug}"
-
-
 def build_profile_keyboard(profile: MemberProfile) -> dict:
-    return {
-        "inline_keyboard": [
-            [{"text": "Открыть профиль", "url": build_profile_url(profile)}]
-        ]
-    }
+    """
+    https → Button; sonst leere Keyboard-Struktur, damit alte Buttons entfernt werden.
+    """
+    profile_url = build_profile_url(profile)
+    if is_telegram_button_url(profile_url):
+        return {
+            "inline_keyboard": [
+                [{"text": "Открыть профиль", "url": profile_url}]
+            ]
+        }
+    return {"inline_keyboard": []}
 
 
 def generate_placeholder_avatar(profile: MemberProfile) -> bytes:

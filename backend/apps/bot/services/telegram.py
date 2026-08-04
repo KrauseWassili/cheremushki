@@ -96,14 +96,32 @@ def process_forum_topic_message(message: dict) -> None:
         remember_forum_topic(edited["name"], thread_id)
 
 
+def parse_people_topic_id(raw: str | int | None) -> int | None:
+    """
+    Akzeptiert reine Thread-IDs ('3') und t.me/c-Formate ('4378956431/3').
+    """
+    if raw is None:
+        return None
+    value = str(raw).strip()
+    if not value:
+        return None
+    if "/" in value:
+        value = value.rsplit("/", 1)[-1]
+    try:
+        return int(value)
+    except ValueError:
+        logger.warning("Ungültige TELEGRAM_PEOPLE_TOPIC_ID: %r", raw)
+        return None
+
+
 def resolve_people_topic_id() -> int | None:
     cached = cache.get(PEOPLE_TOPIC_CACHE_KEY)
     if cached is not None:
         return int(cached)
 
     configured = getattr(settings, "TELEGRAM_PEOPLE_TOPIC_ID", "") or ""
-    if str(configured).strip():
-        topic_id = int(configured)
+    topic_id = parse_people_topic_id(configured)
+    if topic_id is not None:
         cache.set(PEOPLE_TOPIC_CACHE_KEY, topic_id, timeout=None)
         return topic_id
 
@@ -213,7 +231,9 @@ def post_or_update_profile_card(profile, invite: TelegramInvite) -> TelegramInvi
         )
 
     caption = build_profile_caption(profile)
-    reply_markup = json.dumps(build_profile_keyboard(profile), ensure_ascii=False)
+    reply_markup = json.dumps(
+        build_profile_keyboard(profile), ensure_ascii=False
+    )
     photo_bytes, filename = resolve_avatar_bytes(profile)
     chat_id = settings.TELEGRAM_CHAT_ID
 

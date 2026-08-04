@@ -20,6 +20,11 @@ class Command(BaseCommand):
             help="Telegram-User-ID setzen und Invite als used markieren",
         )
         parser.add_argument(
+            "--mark-joined",
+            action="store_true",
+            help="Invite als used markieren (z.B. User ist schon in der Gruppe)",
+        )
+        parser.add_argument(
             "--eager",
             action="store_true",
             help="Direkt ausführen statt Celery-Queue",
@@ -39,34 +44,39 @@ class Command(BaseCommand):
 
         invite, _ = TelegramInvite.objects.get_or_create(user=user)
         tg_id = options["telegram_user_id"]
-        if tg_id is not None:
-            conflict = (
-                TelegramInvite.objects.filter(telegram_user_id=tg_id)
-                .exclude(pk=invite.pk)
-                .first()
-            )
-            if conflict:
-                raise CommandError(
-                    f"Telegram-User-ID {tg_id} ist bereits an user={conflict.user_id} gebunden."
-                )
-            invite.telegram_user_id = tg_id
-            invite.used = True
+        mark_joined = options["mark_joined"] or tg_id is not None
+        if mark_joined:
             from django.utils import timezone
 
+            if tg_id is not None:
+                conflict = (
+                    TelegramInvite.objects.filter(telegram_user_id=tg_id)
+                    .exclude(pk=invite.pk)
+                    .first()
+                )
+                if conflict:
+                    raise CommandError(
+                        f"Telegram-User-ID {tg_id} ist bereits an "
+                        f"user={conflict.user_id} gebunden."
+                    )
+                invite.telegram_user_id = tg_id
+            invite.used = True
             invite.used_at = invite.used_at or timezone.now()
-            invite.save(
-                update_fields=["telegram_user_id", "used", "used_at"]
-            )
+            fields = ["used", "used_at"]
+            if tg_id is not None:
+                fields.append("telegram_user_id")
+            invite.save(update_fields=fields)
             self.stdout.write(
                 self.style.WARNING(
-                    f"Invite für user={user.pk} als used markiert (tg={tg_id})."
+                    f"Invite für user={user.pk} als used markiert "
+                    f"(tg={invite.telegram_user_id})."
                 )
             )
 
         if not invite.used:
             raise CommandError(
                 "Invite ist noch nicht used. Entweder erst der Gruppe beitreten "
-                "oder --telegram-user-id setzen."
+                "oder --mark-joined / --telegram-user-id setzen."
             )
 
         if options["eager"]:
