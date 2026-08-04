@@ -2,9 +2,15 @@ import Link from "next/link";
 
 export default function Footer() {
   return (
-    <footer className="fixed bottom-0 left-0 w-full bg-header-bg py-3 text-header-link-hover">
+    <footer
+      className="fixed bottom-0 left-0 w-full py-3"
+      style={{
+        backgroundColor: "var(--color-header-bg)",
+        color: "var(--color-header-link-hover)",
+      }}
+    >
       <div className="mx-auto flex flex-col flex-wrap items-center justify-center gap-x-8 gap-y-2 px-4 text-center min-[900px]:flex-row">
-        <span className="opacity-80">
+        <span>
           Cheremushki © 2026. Все права защищены.
         </span>
         <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">

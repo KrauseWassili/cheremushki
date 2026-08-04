@@ -13,6 +13,7 @@ import { useApp } from "@/providers/AppProvider";
 import { AvatarUpload } from "@/components/members/avatar-upload";
 import { CustomSelect } from "@/components/ui/custom-select";
 import { ApiError } from "@/lib/api";
+import { useEscapeKey } from "@/lib/use-escape-key";
 import {
   changePassword,
   deleteAccount,
@@ -115,6 +116,11 @@ export default function ProfilePage() {
     () => getProfileRequiredFieldsStatus(draft),
     [draft],
   );
+
+  useEscapeKey(isAccountMenuOpen, () => {
+    setIsAccountMenuOpen(false);
+    setAccountSettingsPanel(null);
+  });
 
   function updateField<K extends keyof ProfileDraft>(
     field: K,
@@ -639,7 +645,12 @@ function AccountSettingsModal({
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg rounded-2xl border border-border bg-bg p-6 shadow-2xl">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Настройки аккаунта"
+        className="w-full max-w-lg rounded-2xl border border-border bg-bg p-6 shadow-2xl"
+      >
         <div className="flex items-start justify-between gap-4">
           <div>
             <h3 className="text-xl font-black">Настройки аккаунта</h3>
@@ -1169,7 +1180,7 @@ function getApiErrorMessage(error: unknown, fallback: string) {
 function getReadOnlyAccountFieldClassName() {
   return [
     "h-11 cursor-not-allowed rounded-xl border border-border",
-    "bg-muted/70 px-3 text-muted-foreground shadow-inner",
+    "bg-surface-muted/80 px-3 text-body shadow-inner",
   ].join(" ");
 }
 

@@ -19,7 +19,7 @@
   --color-surface-muted: var(--palette-linen);
   --color-primary: var(--palette-teal);
   --color-primary-hover: color-mix(in srgb, var(--palette-teal) 72%, var(--palette-ink));
-  --color-accent: var(--palette-coral);
+  --color-accent: color-mix(in srgb, var(--palette-coral) 72%, var(--palette-ink));
   --color-accent-soft: color-mix(in srgb, var(--palette-coral) 18%, var(--palette-surface));
   --color-mint: var(--palette-mint);
   --color-muted: var(--palette-stone);
@@ -33,7 +33,7 @@
   --color-warning-soft: color-mix(in srgb, var(--palette-honey) 24%, var(--palette-surface));
   --color-heading: var(--palette-forest);
   --color-body: color-mix(in srgb, var(--palette-ink) 88%, var(--palette-teal));
-  --color-link: color-mix(in srgb, var(--palette-coral) 88%, var(--palette-ink));
+  --color-link: color-mix(in srgb, var(--palette-coral) 76%, var(--palette-ink));
   --color-link-hover: var(--color-danger);
   --color-emphasis: color-mix(in srgb, var(--palette-honey) 58%, var(--palette-coral));
   --color-header-bg: var(--palette-forest);

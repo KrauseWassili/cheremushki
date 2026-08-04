@@ -1,6 +1,7 @@
 "use client";
 
 import { type Dispatch, useRef, useState } from "react";
+import { useEscapeKey } from "@/lib/use-escape-key";
 
 type AvatarUploadProps = {
   value?: string;
@@ -65,6 +66,8 @@ export function AvatarUpload({
   } | null>(null);
 
   const cropSource = sourceValue || localSourceValue || value;
+
+  useEscapeKey(isCropOpen, () => setIsCropOpen(false));
 
   function openCropModal() {
     setDraftCrop({
@@ -254,6 +257,8 @@ export function AvatarUpload({
         {value ? (
           <img
             src={value}
+            width={112}
+            height={112}
             alt={`Аватар ${fullName}`}
             className={[
               "size-28 rounded-2xl border object-cover",
@@ -281,6 +286,7 @@ export function AvatarUpload({
             onChange={handleFileChange}
             className="sr-only"
             id="avatar-upload"
+            aria-label="Загрузить фотографию профиля"
           />
 
           <div className="flex flex-wrap gap-3">
@@ -327,7 +333,12 @@ export function AvatarUpload({
 
       {cropSource && isCropOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4 backdrop-blur-sm">
-          <div className="w-full max-w-xl rounded-2xl border border-border bg-bg p-6 shadow-2xl">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Настройка фотографии"
+            className="w-full max-w-xl rounded-2xl border border-border bg-bg p-6 shadow-2xl"
+          >
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-xl font-black">Настройка фотографии</h3>

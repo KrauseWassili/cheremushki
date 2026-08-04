@@ -44,6 +44,10 @@ export function getRefreshToken(): string | null {
   );
 }
 
+export function hasAuthTokens(): boolean {
+  return Boolean(getAccessToken() || getRefreshToken());
+}
+
 export function storeTokens(tokens: TokenPair, rememberMe: boolean): void {
   clearTokens();
   const storage = getStorage(rememberMe ? "local" : "session");
@@ -148,7 +152,15 @@ async function refreshAccessTokenOnce(): Promise<string | null> {
 export async function fetchCurrentUser(
   accessToken?: string | null,
 ): Promise<User> {
-  const token = accessToken ?? getAccessToken();
+  let token = accessToken ?? getAccessToken();
+  if (!token) {
+    token = await refreshAccessToken();
+  }
+
+  if (!accessToken && token && isJwtExpired(token)) {
+    token = await refreshAccessToken();
+  }
+
   if (!token) {
     throw new Error("Пользователь не авторизован");
   }
@@ -168,6 +180,23 @@ export async function fetchCurrentUser(
       { method: "GET" },
       refreshed,
     );
+  }
+}
+
+function isJwtExpired(token: string): boolean {
+  try {
+    const [, payload] = token.split(".");
+    if (!payload) return false;
+
+    const normalizedPayload = payload
+      .replace(/-/g, "+")
+      .replace(/_/g, "/")
+      .padEnd(Math.ceil(payload.length / 4) * 4, "=");
+    const data = JSON.parse(atob(normalizedPayload)) as { exp?: number };
+
+    return typeof data.exp === "number" && data.exp * 1000 <= Date.now();
+  } catch {
+    return false;
   }
 }
 

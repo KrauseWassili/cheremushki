@@ -4,6 +4,7 @@ import {FormEvent, useEffect, useState} from "react";
 import {Loader2, X} from "lucide-react";
 import {ApiError, type ApiFieldErrors} from "@/lib/api";
 import {requestPasswordReset} from "@/lib/auth";
+import {useEscapeKey} from "@/lib/use-escape-key";
 
 interface LoginModalProps {
     initialMode?: "login" | "register";
@@ -53,6 +54,8 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
     useEffect(() => {
         setMode(initialMode);
     }, [initialMode]);
+
+    useEscapeKey(!isSubmitting, onClose);
 
     const switchMode = (nextMode: "login" | "register" | "reset-password") => {
         setMode(nextMode);
@@ -144,7 +147,12 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4 backdrop-blur-sm">
-            <div className="bg-bg border border-border rounded-2xl w-full max-w-md shadow-2xl">
+            <div
+                role="dialog"
+                aria-modal="true"
+                aria-label="Вход и регистрация"
+                className="bg-bg border border-border rounded-2xl w-full max-w-md shadow-2xl"
+            >
                 <div className="flex justify-end p-6 border-b border-border">
                         <button
                             type="button"

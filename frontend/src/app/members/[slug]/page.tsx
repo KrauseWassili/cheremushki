@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { MemberProfilePage } from "@/components/members/member-profile-page";
+import { LoadingState } from "@/components/ui/loading-state";
 import { useApp } from "@/providers/AppProvider";
 import { fetchMemberProfile } from "@/lib/profiles";
 import type { MemberProfile } from "@/types/member";
@@ -55,11 +56,7 @@ export default function MemberPage() {
   }, [slug, isLoggedIn, authLoading]);
 
   if (authLoading || loading) {
-    return (
-      <main className="mx-auto w-full max-w-3xl py-16 text-center text-muted-foreground">
-        Загрузка…
-      </main>
-    );
+    return <LoadingState title="Загрузка профиля" lines={2} />;
   }
 
   if (!isLoggedIn) {

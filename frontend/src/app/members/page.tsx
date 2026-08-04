@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { MemberDirectory } from "@/components/members/member-directory";
+import { LoadingState } from "@/components/ui/loading-state";
 import { useApp } from "@/providers/AppProvider";
 import { fetchMemberProfiles } from "@/lib/profiles";
 import type { MemberProfile } from "@/types/member";
@@ -50,11 +51,7 @@ export default function MembersPage() {
   }, [isLoggedIn, authLoading]);
 
   if (authLoading || loading) {
-    return (
-      <main className="mx-auto w-full max-w-3xl py-16 text-center text-muted-foreground">
-        Загрузка…
-      </main>
-    );
+    return <LoadingState title="Загрузка участников" />;
   }
 
   if (!isLoggedIn) {
