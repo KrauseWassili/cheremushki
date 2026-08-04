@@ -1,10 +1,10 @@
 from django.contrib import admin
-
+from unfold.admin import ModelAdmin
 from .models import ContactRequest, MemberProfile
 
 
 @admin.register(MemberProfile)
-class MemberProfileAdmin(admin.ModelAdmin):
+class MemberProfileAdmin(ModelAdmin):
     list_display = (
         "slug",
         "user",
@@ -17,7 +17,7 @@ class MemberProfileAdmin(admin.ModelAdmin):
 
 
 @admin.register(ContactRequest)
-class ContactRequestAdmin(admin.ModelAdmin):
+class ContactRequestAdmin(ModelAdmin):
     list_display = ("from_user", "to_profile", "status", "created_at")
     list_filter = ("status",)
     search_fields = ("from_user__email", "to_profile__slug")
