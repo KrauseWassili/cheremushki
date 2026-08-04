@@ -21,6 +21,14 @@ DEBUG: bool = env("DEBUG")
 ALLOWED_HOSTS: List[str] = env("ALLOWED_HOSTS").split(",")
 
 DJANGO_APPS: Tuple[str, ...] = (
+# --- django unfold
+    "unfold",  # before django.contrib.admin
+    "unfold.contrib.filters",  # optional, if special filters are needed
+    "unfold.contrib.forms",  # optional, if special form elements are needed
+    "unfold.contrib.inlines",  # optional, if special inlines are needed
+    "unfold.contrib.import_export",  # optional, if django-import-export package is used
+    "unfold.contrib.guardian",  # optional, if django-guardian package is used
+    "unfold.contrib.simple_history",  # optional, if django-simple-history package is used
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -36,12 +44,11 @@ THIRD_PARTY_APPS: Tuple[str, ...] = (
     "corsheaders",
     "django_filters",
     "drf_spectacular",
+    "rest_framework_simplejwt.token_blacklist",
 )
 
 LOCAL_APPS: Tuple[str, ...] = ("apps.accounts", "apps.bot", "apps.profiles")
-INSTALLED_APPS = THIRD_PARTY_APPS + DJANGO_APPS + LOCAL_APPS + (
-    "rest_framework_simplejwt.token_blacklist",
-)
+INSTALLED_APPS = THIRD_PARTY_APPS + DJANGO_APPS + LOCAL_APPS
 
 AUTH_USER_MODEL = "accounts.CustomUser"
 
@@ -154,6 +161,10 @@ UNFOLD = {
 TELEGRAM_BOT_TOKEN = env.str("TELEGRAM_BOT_TOKEN", default="")
 TELEGRAM_CHAT_ID = env.str("TELEGRAM_CHAT_ID", default="")
 TELEGRAM_WEBHOOK_SECRET = env("TELEGRAM_WEBHOOK_SECRET")
+TELEGRAM_PEOPLE_TOPIC_NAME = env.str(
+    "TELEGRAM_PEOPLE_TOPIC_NAME", default="Наши люди"
+)
+TELEGRAM_PEOPLE_TOPIC_ID = env.str("TELEGRAM_PEOPLE_TOPIC_ID", default="")
 
 # --- Cors ----------------------------------------------------------- #
 CORS_ALLOW_CREDENTIALS = True
@@ -186,7 +197,9 @@ CELERY_RETRY_MAX_TIMES = 15  # 15 retries
 CELERY_TASK_DEFAULT_QUEUE = "default"
 CELERY_TASK_ROUTES = {
     "apps.bot.tasks.email.*": {"queue": "default"},
+    "apps.bot.tasks.profile_post.*": {"queue": "default"},
     "apps.bot.tasks.telegram_user.*": {"queue": "default"},
+    "apps.accounts.tasks.*": {"queue": "default"},
     "apps.profiles.tasks.*": {"queue": "default"},
     "apps.*.tasks.generation.*": {"queue": "generation"},
 }
