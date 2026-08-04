@@ -3,6 +3,8 @@
 import { FormEvent, Suspense, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { Button, buttonClassName } from "@/components/ui/button";
+import { fieldClassName } from "@/components/ui/text-field";
 import { ApiError } from "@/lib/api";
 import { confirmPasswordReset } from "@/lib/auth";
 
@@ -126,17 +128,16 @@ function PasswordResetConfirmContent() {
           )}
 
           <div className="flex flex-wrap items-center gap-3">
-            <button
+            <Button
               type="submit"
               disabled={!canSubmit}
-              className="rounded-xl border border-border px-4 py-2.5 text-sm font-bold text-foreground transition hover:bg-muted disabled:opacity-60"
             >
               {isSaving ? "Сохранение…" : "Сохранить пароль"}
-            </button>
+            </Button>
 
             <Link
               href="/"
-              className="rounded-xl border border-border px-4 py-2.5 text-sm font-bold text-foreground transition hover:bg-muted"
+              className={buttonClassName()}
             >
               На главную
             </Link>
@@ -148,10 +149,7 @@ function PasswordResetConfirmContent() {
 }
 
 function getFieldClassName() {
-  return [
-    "h-11 rounded-xl border border-border bg-input-background px-3 text-foreground shadow-inner",
-    "focus:border-foreground/40 focus:outline-none focus:ring-4 focus:ring-foreground/5",
-  ].join(" ");
+  return fieldClassName();
 }
 
 export default function PasswordResetConfirmPage() {

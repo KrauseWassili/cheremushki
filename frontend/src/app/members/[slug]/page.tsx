@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { MemberProfilePage } from "@/components/members/member-profile-page";
+import { Button } from "@/components/ui/button";
 import { LoadingState } from "@/components/ui/loading-state";
 import { useApp } from "@/providers/AppProvider";
 import { fetchMemberProfile } from "@/lib/profiles";
@@ -65,13 +66,14 @@ export default function MemberPage() {
         <p className="text-muted-foreground">
           Войдите, чтобы открыть профиль участника.
         </p>
-        <button
+        <Button
           type="button"
           onClick={() => openLogin("login")}
-          className="button-gray-rounded mt-6"
+          variant="primary"
+          className="mt-6"
         >
           Войти
-        </button>
+        </Button>
       </main>
     );
   }
@@ -80,7 +82,7 @@ export default function MemberPage() {
     <main className="mx-auto w-full max-w-3xl py-4">
       <Link
         href="/members"
-        className="mb-7 inline-flex text-sm font-bold text-muted-foreground hover:text-foreground"
+        className="my-5 inline-flex text-base font-bold text-muted-foreground hover:text-foreground"
       >
         ← Все участники
       </Link>

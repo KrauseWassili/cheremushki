@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { buttonClassName } from "@/components/ui/button";
 import { ApiError } from "@/lib/api";
 import { activateAccount } from "@/lib/auth";
 
@@ -83,7 +84,7 @@ function ActivateAccountContent() {
         <div className="mt-6 flex flex-wrap items-center gap-3">
           <Link
             href="/"
-            className="rounded-xl border border-border px-4 py-2.5 text-sm font-bold text-foreground transition hover:bg-muted"
+            className={buttonClassName()}
           >
             На главную
           </Link>

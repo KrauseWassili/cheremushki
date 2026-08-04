@@ -7,8 +7,8 @@ import Link from "next/link";
 export default function PrivacyPage() {
   return (
     <main className="mx-auto w-full max-w-3xl py-4">
-      <header className="mx-auto mb-10 max-w-3xl text-center">
-        <h1 className="mt-3 text-4xl font-black tracking-tight">
+      <header className="text-page-header mx-auto mb-10 max-w-3xl text-center">
+        <h1 className="mt-3 text-4xl font-bold tracking-tight">
           Политика конфиденциальности
         </h1>
 
@@ -27,7 +27,7 @@ export default function PrivacyPage() {
       </header>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">
+        <h2 className="section-block__title font-bold">
           1. Ответственный за обработку данных
         </h2>
 
@@ -53,7 +53,7 @@ export default function PrivacyPage() {
       </section>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">
+        <h2 className="section-block__title font-bold">
           2. Технические данные при посещении сайта
         </h2>
 
@@ -98,7 +98,7 @@ export default function PrivacyPage() {
       </section>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">
+        <h2 className="section-block__title font-bold">
           3. Данные, передаваемые через анкету
         </h2>
 
@@ -146,7 +146,7 @@ export default function PrivacyPage() {
       </section>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">
+        <h2 className="section-block__title font-bold">
           4. Рассмотрение заявки
         </h2>
 
@@ -168,7 +168,7 @@ export default function PrivacyPage() {
       </section>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">5. Сроки хранения</h2>
+        <h2 className="section-block__title font-bold">5. Сроки хранения</h2>
 
         <p className="section-block__text">
           Мы храним персональные данные <em>не дольше, чем это необходимо</em> для целей,
@@ -206,7 +206,7 @@ export default function PrivacyPage() {
          
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">6. Telegram</h2>
+        <h2 className="section-block__title font-bold">6. Telegram</h2>
 
         <p className="section-block__text">
           После одобрения заявки участнику может быть направлена ссылка на
@@ -235,7 +235,7 @@ export default function PrivacyPage() {
       </section>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">
+        <h2 className="section-block__title font-bold">
           7. Cookies и аналитика
         </h2>
 
@@ -252,7 +252,7 @@ export default function PrivacyPage() {
       </section>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">
+        <h2 className="section-block__title font-bold">
           8. Передача данных другим лицам
         </h2>
 
@@ -273,7 +273,7 @@ export default function PrivacyPage() {
       </section>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">
+        <h2 className="section-block__title font-bold">
           9. Передача данных за пределы ЕС
         </h2>
 
@@ -296,7 +296,7 @@ export default function PrivacyPage() {
       </section>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">
+        <h2 className="section-block__title font-bold">
           10. Права пользователя
         </h2>
 
@@ -345,7 +345,7 @@ export default function PrivacyPage() {
       </section>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">
+        <h2 className="section-block__title font-bold">
           11. Право подать жалобу
         </h2>
 
@@ -382,7 +382,7 @@ export default function PrivacyPage() {
       </section>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">12. Защита данных</h2>
+        <h2 className="section-block__title font-bold">12. Защита данных</h2>
 
         <p className="section-block__text">
           Мы принимаем <em>разумные технические и организационные меры</em> для защиты
@@ -396,7 +396,7 @@ export default function PrivacyPage() {
       </section>
 
       <section className="section-block">
-        <h2 className="section-block__title font-black">
+        <h2 className="section-block__title font-bold">
           13. Изменение политики
         </h2>
 

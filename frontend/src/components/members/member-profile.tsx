@@ -32,9 +32,9 @@ export function MemberProfileView({
   ].filter((fact) => fact.value);
 
   return (
-    <div className="grid gap-6">
-      <section className="rounded-3xl border border-border bg-background p-6 shadow-sm">
-        <div className="flex flex-col gap-6 min-[900px]:flex-row">
+    <div className="grid gap-4">
+      <section className="rounded-3xl border border-border bg-background p-5 shadow-sm">
+        <div className="flex flex-col gap-4 min-[900px]:flex-row">
           {member.avatarUrl ? (
             <img
               src={member.avatarUrl}
@@ -52,17 +52,17 @@ export function MemberProfileView({
           )}
 
           <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h1 className="text-3xl font-black tracking-tight text-ink">
+                <h1 className="mb-0 text-3xl font-bold tracking-tight text-accent">
                   {member.fullName}
                 </h1>
 
-                <p className="mt-2 text-lg font-semibold text-primary">
+                <p className="mb-0 mt-1.5 text-lg font-semibold leading-6 text-heading">
                   {member.headline}
                 </p>
 
-                <p className="mt-3 inline-flex items-center gap-1.5 text-sm text-muted-foreground">
+                <p className="mb-0 mt-2 inline-flex items-center gap-1.5 text-sm leading-5 text-muted-foreground">
                   <MapPin size={14} aria-hidden />
                   {member.city}
                 </p>
@@ -74,7 +74,7 @@ export function MemberProfileView({
             </div>
 
             {member.tags.length > 0 && (
-              <div className="mt-5 flex flex-wrap gap-2">
+              <div className="mt-3 flex flex-wrap gap-2">
                 {member.tags.map((tag) => (
                   <span
                     key={tag}
@@ -89,29 +89,29 @@ export function MemberProfileView({
         </div>
       </section>
 
-      <section className="rounded-3xl border border-border bg-background p-6 shadow-sm">
-        <h2 className="text-xl font-black text-heading">О себе</h2>
-        <p className="mt-4 whitespace-pre-line leading-7 text-body">
+      <section className="rounded-3xl border border-border bg-background p-5 shadow-sm">
+        <h2 className="mb-0 text-lg font-bold text-heading">О себе</h2>
+        <p className="mb-0 mt-2 whitespace-pre-line leading-6 text-body">
           {member.bio}
         </p>
       </section>
 
-      <div className="grid gap-6 min-[900px]:grid-cols-2">
-        <section className="rounded-3xl border border-border bg-background p-6 shadow-sm">
-          <h2 className="text-lg font-black text-accent">Могу помочь</h2>
-          <p className="mt-3 leading-7 text-body">{member.canHelpWith}</p>
+      <div className="grid gap-4 min-[900px]:grid-cols-2">
+        <section className="rounded-3xl border border-border bg-background p-5 shadow-sm">
+          <h2 className="mb-0 text-lg font-bold text-heading">Могу помочь</h2>
+          <p className="mb-0 mt-1.5 leading-6 text-body">{member.canHelpWith}</p>
         </section>
 
-        <section className="rounded-3xl border border-border bg-background p-6 shadow-sm">
-          <h2 className="text-lg font-black text-accent">Сейчас интересно</h2>
-          <p className="mt-3 leading-7 text-body">{member.lookingFor}</p>
+        <section className="rounded-3xl border border-border bg-background p-5 shadow-sm">
+          <h2 className="mb-0 text-lg font-bold text-heading">Сейчас интересно</h2>
+          <p className="mb-0 mt-1.5 leading-6 text-body">{member.lookingFor}</p>
         </section>
       </div>
 
-      <section className="rounded-3xl border border-border bg-background p-6 shadow-sm">
-        <h2 className="text-xl font-black text-heading">Профессиональное</h2>
+      <section className="rounded-3xl border border-border bg-background p-5 shadow-sm">
+        <h2 className="mb-0 text-lg font-bold text-heading">Профессиональное</h2>
 
-        <dl className="mt-5 grid gap-3 min-[900px]:grid-cols-3">
+        <dl className="mt-3 grid gap-3 min-[900px]:grid-cols-3">
           {professionalFacts.map((fact) => (
             <div
               key={fact.label}
@@ -127,10 +127,10 @@ export function MemberProfileView({
       </section>
 
       {member.achievements.length > 0 && (
-        <section className="rounded-3xl border border-border bg-background p-6 shadow-sm">
-          <h2 className="text-xl font-black">Вклад в сообщество</h2>
+        <section className="rounded-3xl border border-border bg-background p-5 shadow-sm">
+          <h2 className="mb-0 text-base font-bold">Вклад в сообщество</h2>
 
-          <div className="mt-5 flex flex-wrap gap-3">
+          <div className="mt-3 flex flex-wrap gap-3">
             {member.achievements.map((achievement) => (
               <span
                 key={achievement}
@@ -144,9 +144,9 @@ export function MemberProfileView({
       )}
 
       {hasVisibleContactActions(member) && (
-        <section className="rounded-3xl border border-border bg-background p-6 shadow-sm">
-          <h2 className="text-xl font-black">Связаться</h2>
-          <div className="mt-5">
+        <section className="rounded-3xl border border-border bg-background p-5 shadow-sm">
+          <h2 className="mb-0 text-lg font-bold text-heading">Связаться</h2>
+          <div className="mt-3">
             <MemberContactActions member={member} />
           </div>
         </section>
