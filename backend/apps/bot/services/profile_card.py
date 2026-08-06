@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import io
+import re
 from typing import TYPE_CHECKING
 
 from django.conf import settings
@@ -13,7 +14,7 @@ if TYPE_CHECKING:
 PLACEHOLDER_BIO = "Профиль ещё заполняется"
 PLACEHOLDER_HELP = "Скоро расскажу, чем могу помочь"
 PLACEHOLDER_LOOKING = "Скоро расскажу, что сейчас интересно"
-
+TELEGRAM_USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{5,32}$")
 
 def _esc(value: str) -> str:
     return html.escape((value or "").strip())
@@ -39,9 +40,9 @@ def build_profile_url(profile: MemberProfile) -> str:
 def build_profile_caption(profile: MemberProfile) -> str:
     user = profile.user
     name = _esc(user.full_name) or _esc(user.email)
-    profession = (profile.profession or profile.headline or "Участник").strip()
+    headline = (profile.headline or "Участник").strip()
     city = (profile.city or "—").strip()
-    subtitle = _esc(f"{profession} · {city}")
+    subtitle = _esc(f"{headline} · {city}")
 
     bio = _esc(profile.bio) or PLACEHOLDER_BIO
     can_help = _esc(profile.can_help_with) or PLACEHOLDER_HELP
@@ -67,13 +68,51 @@ def build_profile_caption(profile: MemberProfile) -> str:
     )
     return caption[:1024]
 
+#Нормализуем имя пользователя тг для кнопки под постом
+def normalize_telegram_username(value: str | None) -> str | None:
+    username = (value or "").strip()
+
+    # Разрешаем хранить как @username
+    username = username.removeprefix("@")
+
+    # Или как https://t.me/username
+    if username.startswith("https://t.me/"):
+        username = username.removeprefix("https://t.me/")
+        username = username.split("?", maxsplit=1)[0]
+        username = username.strip("/")
+
+    if not TELEGRAM_USERNAME_RE.fullmatch(username):
+        return None
+
+    return username
+
 
 def build_profile_keyboard(profile: MemberProfile) -> dict:
-    return {
-        "inline_keyboard": [
-            [{"text": "Открыть профиль", "url": build_profile_url(profile)}]
+    keyboard = [
+        [
+            {
+                "text": "Открыть профиль в клубе",
+                "url": build_profile_url(profile),
+            }
         ]
-    }
+    ]
+
+    #добавлена кнопка личного сообщения пользователя. 
+    telegram_username = normalize_telegram_username(
+        profile.telegram_username
+    )
+    #появляется, если пользователь в профиле выбрал прямой способ контакта и указал имя пользователя тг
+    if profile.contact_mode == "direct" and telegram_username:
+        keyboard.append(
+            [
+                {
+                    "text": "Написать сообщение",
+                    "url": f"https://t.me/{telegram_username}",
+                }
+            ]
+        )
+
+    return {"inline_keyboard": keyboard}
 
 
 def generate_placeholder_avatar(profile: MemberProfile) -> bytes:

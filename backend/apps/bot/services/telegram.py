@@ -270,6 +270,20 @@ def post_or_update_profile_card(profile, invite: TelegramInvite) -> TelegramInvi
             )
             return invite
         except Exception as exc:
+            #ловим ошибку "сообщение не было изменено", чтобы не создавалось новое сообщение при сохранении данных в профиле, не попадающих в пост тг
+            error_message = str(exc).lower()
+
+            if "message is not modified" in error_message:
+                logger.info(
+                    "Telegram profile post for user %s is already up to date",
+                    invite.user_id,
+                )
+
+                invite.profile_synced_at = timezone.now()
+                invite.save(update_fields=["profile_synced_at"])
+
+                return invite
+
             logger.warning(
                 "editMessageMedia failed for user %s (%s); sending new post",
                 invite.user_id,
