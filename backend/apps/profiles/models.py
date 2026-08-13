@@ -46,7 +46,9 @@ class MemberProfile(models.Model):
     languages = models.JSONField(default=list, blank=True)
     achievements = models.JSONField(default=list, blank=True)
 
-    telegram_username = models.CharField(max_length=64, blank=True, default="")
+    # 32 = Telegrams Maximum. Der Wert wird kanonisch gespeichert (bare,
+    # lowercase, ohne '@' und ohne URL) siehe apps.profiles.telegram.
+    telegram_username = models.CharField(max_length=32, blank=True, default="")
     linkedin_url = models.URLField(blank=True, default="")
     website_url = models.URLField(blank=True, default="")
     contact_mode = models.CharField(
@@ -100,11 +102,7 @@ class MemberProfile(models.Model):
         base_slug = slugify(source) or f"member-{self.user.pk}"
         candidate = base_slug
         counter = 2
-        while (
-            MemberProfile.objects.filter(slug=candidate)
-            .exclude(pk=self.pk)
-            .exists()
-        ):
+        while MemberProfile.objects.filter(slug=candidate).exclude(pk=self.pk).exists():
             candidate = f"{base_slug}-{counter}"
             counter += 1
         self.slug = candidate

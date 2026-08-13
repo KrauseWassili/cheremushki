@@ -2,19 +2,27 @@ from __future__ import annotations
 
 import html
 import io
-import re
+import logging
 from typing import TYPE_CHECKING
 
 from django.conf import settings
 from PIL import Image, ImageDraw, ImageFont
 
+from apps.profiles.models import ContactMode
+from apps.profiles.telegram import build_telegram_dm_url, normalize_telegram_username
+
 if TYPE_CHECKING:
     from apps.profiles.models import MemberProfile
+
+logger = logging.getLogger(__name__)
 
 PLACEHOLDER_BIO = "Профиль ещё заполняется"
 PLACEHOLDER_HELP = "Скоро расскажу, чем могу помочь"
 PLACEHOLDER_LOOKING = "Скоро расскажу, что сейчас интересно"
-TELEGRAM_USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{5,32}$")
+
+CAPTION_MAX_LENGTH = 1024
+AVATAR_SIZE = 512
+
 
 def _esc(value: str) -> str:
     return html.escape((value or "").strip())
@@ -66,28 +74,21 @@ def build_profile_caption(profile: MemberProfile) -> str:
         f"<b>Теги</b>\n"
         f"{tags_line}"
     )
-    return caption[:1024]
-
-#Нормализуем имя пользователя тг для кнопки под постом
-def normalize_telegram_username(value: str | None) -> str | None:
-    username = (value or "").strip()
-
-    # Разрешаем хранить как @username
-    username = username.removeprefix("@")
-
-    # Или как https://t.me/username
-    if username.startswith("https://t.me/"):
-        username = username.removeprefix("https://t.me/")
-        username = username.split("?", maxsplit=1)[0]
-        username = username.strip("/")
-
-    if not TELEGRAM_USERNAME_RE.fullmatch(username):
-        return None
-
-    return username
+    return caption[:CAPTION_MAX_LENGTH]
 
 
 def build_profile_keyboard(profile: MemberProfile) -> dict:
+    """
+    Baut das Inline-Keyboard unter dem Profilpost.
+
+    Der DM-Button erscheint nur bei ContactMode.DIRECT: Der Post ist für die
+    ganze Gruppe sichtbar, der Button legt den Telegram-Handle also allen
+    Mitgliedern offen. Nur dieser Kontaktmodus erlaubt das ausdrücklich.
+
+    Der Username wird hier erneut geprüft, obwohl der Serializer bereits
+    kanonisiert. Das ist ein Gate, keine Reparatur: es schützt Datensätze aus
+    Admin, Shell und Fixtures, die den Serializer nie gesehen haben.
+    """
     keyboard = [
         [
             {
@@ -97,20 +98,24 @@ def build_profile_keyboard(profile: MemberProfile) -> dict:
         ]
     ]
 
-    #добавлена кнопка личного сообщения пользователя. 
-    telegram_username = normalize_telegram_username(
-        profile.telegram_username
-    )
-    #появляется, если пользователь в профиле выбрал прямой способ контакта и указал имя пользователя тг
-    if profile.contact_mode == "direct" and telegram_username:
-        keyboard.append(
-            [
-                {
-                    "text": "Написать сообщение",
-                    "url": f"https://t.me/{telegram_username}",
-                }
-            ]
-        )
+    if profile.contact_mode == ContactMode.DIRECT and profile.telegram_username:
+        username = normalize_telegram_username(profile.telegram_username)
+        if username:
+            keyboard.append(
+                [
+                    {
+                        "text": "Написать сообщение",
+                        "url": build_telegram_dm_url(username),
+                    }
+                ]
+            )
+        else:
+            logger.warning(
+                "Profil user=%s: telegram_username %r nicht verwertbar – "
+                "DM-Button entfällt",
+                profile.user_id,
+                profile.telegram_username,
+            )
 
     return {"inline_keyboard": keyboard}
 
@@ -119,7 +124,7 @@ def generate_placeholder_avatar(profile: MemberProfile) -> bytes:
     initials_source = f"{profile.user.first_name[:1]}{profile.user.last_name[:1]}"
     initials = (initials_source or "?").upper()
 
-    size = 512
+    size = AVATAR_SIZE
     image = Image.new("RGB", (size, size), color=(36, 48, 66))
     draw = ImageDraw.Draw(image)
 
@@ -140,6 +145,9 @@ def generate_placeholder_avatar(profile: MemberProfile) -> bytes:
 
 
 def resolve_avatar_bytes(profile: MemberProfile) -> tuple[bytes, str]:
+    """
+    Liest den Avatar fällt auf ein generiertes Initialen Bild zurück.
+    """
     if profile.avatar:
         try:
             profile.avatar.open("rb")
@@ -147,6 +155,13 @@ def resolve_avatar_bytes(profile: MemberProfile) -> tuple[bytes, str]:
             profile.avatar.close()
             name = profile.avatar.name.rsplit("/", 1)[-1] or "avatar.jpg"
             return data, name
-        except Exception:
-            pass
+        except (OSError, ValueError) as exc:  # ValueError: SuspiciousFileOperation
+            # Storage nicht erreichbar oder Datei weg: Der Post soll trotzdem
+            # rausgehen, aber der Fehlschlag darf nicht unsichtbar bleiben –
+            # er ändert den Bildinhalt und damit den Post.
+            logger.warning(
+                "Avatar für user=%s nicht lesbar (%s) – Platzhalter wird genutzt",
+                profile.user_id,
+                exc,
+            )
     return generate_placeholder_avatar(profile), "avatar.png"

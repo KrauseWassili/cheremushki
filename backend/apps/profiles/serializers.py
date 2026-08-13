@@ -2,6 +2,7 @@ from asgiref.sync import sync_to_async
 from adrf import serializers
 from rest_framework.exceptions import ValidationError
 from .models import ContactMode, ContactRequest, MemberProfile
+from .telegram import InvalidTelegramUsername, parse_telegram_username
 
 
 class MemberProfileSerializer(serializers.ModelSerializer):
@@ -109,6 +110,20 @@ class MemberProfileSerializer(serializers.ModelSerializer):
         if not isinstance(value, list):
             raise ValidationError("achievements muss eine Liste sein.")
         return [str(item).strip() for item in value if str(item).strip()]
+
+    def validate_telegram_username(self, value):
+        """
+        Validiert die Eingabe, damit in der DB genau ein Format steht.
+        """
+        if not (value or "").strip():
+            return ""
+        try:
+            return parse_telegram_username(value)
+        except InvalidTelegramUsername:
+            raise ValidationError(
+                "Bitte einen gültigen Telegram-Usernamen angeben – "
+                "z. B. @durov oder https://t.me/durov."
+            )
 
     def validate_slug(self, value):
         value = (value or "").strip().lower()
