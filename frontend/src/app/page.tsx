@@ -39,7 +39,7 @@ export default function Home() {
           </div>
         </section>
         <section className="section-block home-intro-teaser text-foreground font-sans">
-          <p className="section-block__text flex justify-center font-bold text-primary">
+          <p className="section-block__text flex justify-center font-black text-primary">
             Не знаете, зачем всё это и с чего начать?
           </p>
 
@@ -47,7 +47,7 @@ export default function Home() {
             Ниже коротко объясняем, как устроен клуб и чем он полезен.
           </p>
           <p className="section-block__text text-center">
-            Подробнее можно узнать{" "}
+            Также можете подробнее узнать{" "}
             <a href="/project" className="underline">
               о проекте
             </a>{" "}
@@ -60,7 +60,7 @@ export default function Home() {
         </section>
       </div>
       <section id="about" className="section-block text-foreground font-sans">
-        <h2 className="section-block__title font-bold">Зачем нужен клуб</h2>
+        <h2 className="section-block__title font-black">Зачем нужен клуб</h2>
 
         <p className="section-block__text">
           Вы с рождения живёте в Германии или только недавно сюда приехали? В
@@ -80,14 +80,24 @@ export default function Home() {
       </section>
 
       <section className="section-block text-foreground font-sans">
-        <h2 className="section-block__title font-bold">
+        <h2 className="section-block__title font-black">
           Что происходит внутри
         </h2>
 
         <p className="section-block__text">
+          Сайт помогает участникам <em>рассказать о себе</em> и найти людей, с
+          которыми хочется общаться, советоваться или делать что-то вместе.
+        </p>
+
+        <p className="section-block__text">
+          Здесь можно заполнить профиль, посмотреть каталог и понять, к кому
+          обратиться с вопросом, идеей или предложением.
+        </p>
+
+        <p className="section-block__text">
           Общение проходит в <em>закрытой Telegram-группе</em>. В ней есть отдельные темы
           для знакомств, работы и карьеры, профессиональных вопросов, жизни в
-          Германии, событий, досуга и барахолки.
+          Германии, событий, досуга и барахолки. Есть возможность поиска участников <em>по тегам</em>.
         </p>
 
         <p className="section-block__text">
@@ -102,22 +112,22 @@ export default function Home() {
       </section>
 
       <section className="section-block text-foreground font-sans">
-        <h2 className="section-block__title font-bold">Как всё устроено</h2>
+        <h2 className="section-block__title font-black">Как всё устроено</h2>
 
         <ol className="ml-5 list-decimal space-y-3 text-lg leading-8 text-body marker:text-accent">
-          <li>Пройдите процедуру регистрации и активируйте аккаунт по ссылке из письма.</li>
+          <li>Пройдите процедуру регистрации.</li>
 
-          <li>Войдите на сайт и расскажите о себе, заполнив небольшую анкету.</li>
+          <li>Расскажите подробнее о себе, заполнив небольшую анкету.</li>
 
           <li>
-            После активации вы получите пригласительную ссылку в закрытую
-            Telegram-группу. После вступления профиль появится в разделе «Наши люди».
+            После этого вы получите доступ в клуб и пригласительную ссылку
+            для вступления в закрытую Telegram-группу по электронной почте.
           </li>
         </ol>
       </section>
 
       <section className="section-block text-foreground font-sans">
-        <h2 className="section-block__title font-bold">
+        <h2 className="section-block__title font-black">
           На чём держится сообщество
         </h2>
 
@@ -152,7 +162,7 @@ export default function Home() {
       </section>
 
       <section className="section-block text-foreground font-sans">
-        <h2 className="section-block__title font-bold">
+        <h2 className="section-block__title font-black">
           Хотите присоединиться?
         </h2>
 
@@ -169,4 +179,5 @@ export default function Home() {
       </section>
     </>
   );
+
 }

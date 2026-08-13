@@ -383,7 +383,7 @@ export function AvatarUpload({
                   style={{
                     ...getFrameStyle(draftCrop, imageSize),
                   }}
-                  className="absolute cursor-move border-2 border-crop-frame bg-transparent shadow-[0_0_0_9999px_var(--color-crop-mask)]"
+                  className="absolute cursor-move overflow-hidden rounded-3xl border-2 border-crop-frame bg-transparent shadow-[0_0_0_9999px_var(--color-crop-mask)]"
                 >
                   <div className="pointer-events-none absolute inset-0 grid grid-cols-3 grid-rows-3">
                     {Array.from({ length: 9 }).map((_, index) => (

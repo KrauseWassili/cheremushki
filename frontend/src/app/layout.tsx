@@ -22,7 +22,7 @@ export const metadata: Metadata = {
     siteName: "Черемушки",
     images: [
       {
-        url: "/social-preview.png",
+        url: "/social_preview.jpg",
         width: 1200,
         height: 630,
         alt: "Превью клуба Черемушки",
@@ -35,7 +35,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Черемушки",
     description: "Локальное русскоязычное сообщество в Бремене и рядом",
-    images: ["/social-preview.png"],
+    images: ["/social_preview.jpg"],
   },
 };
 export default function RootLayout({
