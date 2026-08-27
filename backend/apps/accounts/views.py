@@ -6,6 +6,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import default_token_generator
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.mail import send_mail
+from django.db import transaction
 from django.template.loader import render_to_string
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
@@ -18,7 +19,16 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from apps.bot.tasks.email import send_telegram_invite_email
+from rest_framework_simplejwt.token_blacklist.models import (
+    BlacklistedToken,
+    OutstandingToken,
+)
+
+from apps.bot.tasks.account import purge_telegram_presence
+from apps.bot.tasks.profile_post import (
+    PROFILE_REMINDER_DELAY_SECONDS,
+    send_profile_completion_reminder,
+)
 
 from .models import CustomUser
 from .serializers import (
@@ -40,6 +50,15 @@ class LoginViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
     permission_classes = [AllowAny]
     queryset = CustomUser.objects.none()
     serializer_class = CustomTokenObtainPairSerializer
+    throttle_scope = "login"
+
+    def get_throttles(self):
+        # Der Refresh braucht ein eigenes, großzügigeres Limit: Er läuft
+        # automatisch aus dem Frontend (Access-Token lebt 15 Minuten) und
+        # würde das Login-Limit sonst für echte Anmeldungen verbrauchen.
+        if getattr(self, "action", None) == "refresh":
+            self.throttle_scope = "token_refresh"
+        return [ScopedRateThrottle()]
 
     async def acreate(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -75,6 +94,10 @@ class RegisterViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
     serializer_class = RegisterSerializer
     permission_classes = [AllowAny]
     queryset = CustomUser.objects.none()
+    throttle_scope = "sign_up"
+
+    def get_throttles(self):
+        return [ScopedRateThrottle()]
 
     async def acreate(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -104,7 +127,7 @@ class ActivateAccountViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
     serializer_class = AccountActivationSerializer
     permission_classes = [AllowAny]
     queryset = CustomUser.objects.none()
-    throttle_scope = "password_reset"
+    throttle_scope = "activate"
 
     def get_throttles(self):
         return [ScopedRateThrottle()]
@@ -131,11 +154,18 @@ class ActivateAccountViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
             user.is_active = True
             user.save(update_fields=["is_active"])
 
-            # Invite-Row sofort anlegen, auch wenn Celery kurz down ist.
+            # Invite-Zeile sofort anlegen, auch wenn Celery kurz down ist –
+            # aber NICHT versenden. Die Einladung folgt erst, wenn das Profil
+            # vollständig ist.
             from apps.bot.models import TelegramInvite
 
             TelegramInvite.objects.get_or_create(user=user)
-            send_telegram_invite_email.delay(user.pk)
+
+            # Erinnerung an das noch leere Profil. Zielgruppe ist jetzt
+            # "aktiviert, aber unvollständig"
+            send_profile_completion_reminder.apply_async(
+                args=[user.pk], countdown=PROFILE_REMINDER_DELAY_SECONDS
+            )
             return ("ok", user)
 
         result, user = await sync_to_async(_activate)()
@@ -161,8 +191,8 @@ class ActivateAccountViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
         return Response(
             {
                 "detail": (
-                    "Аккаунт активирован. Проверь почту — там приглашение "
-                    "в Telegram-группу. Теперь можно войти и заполнить профиль."
+                    "Аккаунт активирован. Войди и заполни профиль — "
+                    "после этого придёт приглашение в Telegram-группу."
                 ),
                 "already_active": False,
             },
@@ -174,6 +204,11 @@ class UserMeViewSet(viewsets.GenericViewSet):
     serializer_class = UserSerializer
     permission_classes = (IsAuthenticated,)
     queryset = CustomUser.objects.none()
+
+    # Absichtlich ohne throttle_scope: Das Frontend ruft /user/me/ bei jedem
+    # Seitenaufruf und nach jedem Token-Refresh. Ein Limit hier würde die
+    # Anwendung ausbremsen, und der Endpunkt ist authentifiziert und liest nur
+    # die eigenen Daten.
 
     @action(detail=False, methods=["get", "patch"], url_path="me")
     async def me(self, request):
@@ -194,6 +229,10 @@ class LogoutViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
     serializer_class = LogoutSerializer
     permission_classes = [IsAuthenticated]
     queryset = CustomUser.objects.none()
+    throttle_scope = "account"
+
+    def get_throttles(self):
+        return [ScopedRateThrottle()]
 
     async def acreate(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -225,10 +264,10 @@ class PasswordViewSet(viewsets.GenericViewSet):
         return [AllowAny()]
 
     def get_throttles(self):
-        if self.action in ("reset", "reset_confirm"):
-            self.throttle_scope = "password_reset"
-            return [ScopedRateThrottle()]
-        return super().get_throttles()
+        self.throttle_scope = (
+            "password_reset" if self.action in ("reset", "reset_confirm") else "account"
+        )
+        return [ScopedRateThrottle()]
 
     def get_serializer_class(self):
         if self.action == "change":
@@ -339,10 +378,22 @@ class PasswordViewSet(viewsets.GenericViewSet):
         )
 
 
+def _blacklist_outstanding_tokens(user) -> None:
+    """
+    Entzieht allen ausgegebenen Refresh-Tokens die Gültigkeit.
+    """
+    for token in OutstandingToken.objects.filter(user=user):
+        BlacklistedToken.objects.get_or_create(token=token)
+
+
 class AccountDeleteViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
     serializer_class = AccountDeleteSerializer
     permission_classes = [IsAuthenticated]
     queryset = CustomUser.objects.none()
+    throttle_scope = "account"
+
+    def get_throttles(self):
+        return [ScopedRateThrottle()]
 
     async def acreate(self, request, *args, **kwargs):
         serializer = self.get_serializer(
@@ -350,34 +401,56 @@ class AccountDeleteViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
         )
         await sync_to_async(serializer.is_valid)(raise_exception=True)
 
-        def _soft_delete():
-            from apps.profiles.models import MemberProfile
+        def _soft_delete() -> int:
+            """
+            Anonymisiert Konto und Profil beim Löschen.
+            """
+            from apps.profiles.models import ContactRequest, MemberProfile
 
             user = request.user
-            suffix = f"deleted-{user.pk}"
-            user.email = f"{suffix}@deleted.local"
-            user.first_name = "Gelöscht"
-            user.last_name = "Nutzer"
-            user.is_active = False
-            user.set_unusable_password()
-            user.save(
-                update_fields=[
-                    "email",
-                    "first_name",
-                    "last_name",
-                    "is_active",
-                    "password",
-                ]
-            )
 
-            try:
-                profile = user.member_profile
-            except MemberProfile.DoesNotExist:
-                profile = None
-            if profile is not None:
-                profile.is_directory_visible = False
-                profile.slug = f"deleted-{user.pk}"
-                profile.save(update_fields=["is_directory_visible", "slug"])
+            with transaction.atomic():
+                user.email = f"deleted-{user.pk}@deleted.local"
+                user.first_name = "Gelöscht"
+                user.last_name = "Nutzer"
+                user.street = ""
+                user.street_no = ""
+                user.zip_code = ""
+                user.city = ""
+                user.is_active = False
+                user.set_unusable_password()
+                user.save(
+                    update_fields=[
+                        "email",
+                        "first_name",
+                        "last_name",
+                        "street",
+                        "street_no",
+                        "zip_code",
+                        "city",
+                        "is_active",
+                        "password",
+                    ]
+                )
 
-        await sync_to_async(_soft_delete)()
-        return Response({"detail": "Konto wurde gelöscht."}, status=status.HTTP_200_OK)
+                profile = MemberProfile.objects.filter(user=user).first()
+                if profile is not None:
+                    profile.anonymize()
+
+                # Der Text einer Kontaktanfrage ist Inhalt des Löschenden und
+                # liegt beim Empfänger im Postfach – in der Datenbank hat er
+                # nach der Löschung nichts mehr zu suchen.
+                ContactRequest.objects.filter(from_user=user).update(message="")
+
+                _blacklist_outstanding_tokens(user)
+
+            return user.pk
+
+        user_id = await sync_to_async(_soft_delete)()
+
+        # Telegram außerhalb der Transaktion: Drei Netzwerkaufrufe dürfen die
+        # Löschbestätigung nicht verzögern und nicht scheitern lassen. In der
+        # Datenbank ist die Löschung an dieser Stelle vollzogen.
+        await sync_to_async(purge_telegram_presence.delay)(user_id)
+
+        return Response({"detail": "Аккаунт удалён."}, status=status.HTTP_200_OK)

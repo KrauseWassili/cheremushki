@@ -12,6 +12,17 @@ class TelegramInvite(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     used_at = models.DateTimeField(null=True, blank=True)
 
+    invite_sent_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Zeitpunkt des Einladungsversands. Das Feld verhindert einen zweiten Versand, "
+            "auch wenn das Profil erneut gespeichert wird. Nicht durch "
+            "invite_link ersetzbar, der Link entsteht auch bei einem Retry, "
+            "dessen Mailversand danach scheitert."
+        ),
+    )
+
     telegram_user_id = models.BigIntegerField(
         null=True,
         blank=True,

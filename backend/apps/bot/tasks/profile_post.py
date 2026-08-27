@@ -101,14 +101,24 @@ def _sync_profile_post(task, user_id: int) -> None:
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=120)
 def send_profile_completion_reminder(self, user_id: int):
+    """
+    Erinnert an ein unvollständiges Profil.
+    """
     try:
         user = CustomUser.objects.select_related("member_profile").get(pk=user_id)
     except CustomUser.DoesNotExist:
         return
 
+    if not user.is_active:
+        return
+
     try:
-        invite = TelegramInvite.objects.get(user=user, used=True)
+        invite = TelegramInvite.objects.get(user=user)
     except TelegramInvite.DoesNotExist:
+        return
+
+    # --- Einladung ist raus: Das Profil war vollständig, es gibt nichts zu mahnen.
+    if invite.invite_sent_at:
         return
 
     profile = _get_or_create_profile(user)
@@ -121,14 +131,19 @@ def send_profile_completion_reminder(self, user_id: int):
     frontend = getattr(settings, "FRONTEND_URL", "http://localhost:3000").rstrip("/")
     profile_url = f"{frontend}/profile"
 
+    missing = ", ".join(profile.missing_directory_fields())
+    logger.info(
+        "Profil-Reminder für user=%s, fehlende Felder: %s", user_id, missing or "-"
+    )
+
     text = (
         f"Привет, {user.first_name}!\n\n"
-        "Твой профиль уже опубликован в «Наши люди», но пока заполнен не полностью.\n"
-        f"Пожалуйста, дополни анкету: {profile_url}"
+        "Осталось заполнить профиль — после этого придёт приглашение "
+        "в Telegram-группу клуба.\n"
+        f"Продолжить: {profile_url}"
     )
 
     # --- Reminder nur per E-Mail
-    # Todo Bot reminder
     try:
         html_message = render_to_string(
             "emails/profile_reminder.html",

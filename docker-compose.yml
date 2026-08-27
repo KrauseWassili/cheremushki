@@ -24,6 +24,11 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      # Nicht optional: Die Rate-Limits zählen im Django-Cache, und DRFs
+      # Throttle fängt einen Cache-Fehler nicht ab – ohne Redis antwortet
+      # /accounts/login/ mit 500 statt zu drosseln.
+      redis:
+        condition: service_healthy
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -53,6 +58,9 @@ services:
       retries: 10
 
   worker:
+    # Keine environment-Overrides für Redis/Celery: settings.py liest
+    # DJANGO_CELERY_BROKER_URL und DJANGO_CELERY_RESULT_BACKEND – Keys ohne
+    # dieses Prefix sind wirkungslos und täuschen eine Konfiguration vor.
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -60,10 +68,6 @@ services:
     command: celery -A config.celery:app worker -Q generation,default -l info
     env_file:
       - .env
-    environment:
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
     depends_on:
       db:
         condition: service_healthy
@@ -98,10 +102,6 @@ services:
       dockerfile: Dockerfile
     env_file:
       - .env
-    environment:
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
     command: celery -A config.celery:app beat -l info
     volumes:
       - ./backend:/src

@@ -17,6 +17,17 @@ def avatar_original_upload_to(instance: "MemberProfile", filename: str) -> str:
     return f"avatars/originals/user-{instance.user_id}.{ext}"
 
 
+# --- Die Pflichtfelder für die Aufnahme ins Verzeichnis
+DIRECTORY_REQUIRED_FIELDS: tuple[str, ...] = (
+    "avatar",
+    "city",
+    "headline",
+    "bio",
+    "can_help_with",
+    "looking_for",
+)
+
+
 class ContactMode(models.TextChoices):
     DIRECT = "direct", "Direkt"
     REQUEST = "request", "Anfrage"
@@ -77,23 +88,81 @@ class MemberProfile(models.Model):
     def __str__(self):
         return f"{self.slug} ({self.user.email})"
 
-    def compute_directory_ready(self) -> bool:
-        required = [
-            bool(self.avatar),
-            bool(self.city.strip()),
-            bool(self.headline.strip()),
-            bool(self.bio.strip()),
-            bool(self.can_help_with.strip()),
-            bool(self.looking_for.strip()),
-        ]
-        return all(required) and self.user.is_active
+    def missing_directory_fields(self) -> list[str]:
+        """
+        Nennt die noch leeren Pflichtfelder in Formularreihenfolge.
+        """
+        missing = []
+        for name in DIRECTORY_REQUIRED_FIELDS:
+            value = getattr(self, name)
+            # Der Avatar ist ein FieldFile: bool() prüft, ob eine Datei
+            # zugeordnet ist. Die Textfelder brauchen strip(), damit ein
+            # Leerzeichen nicht als Inhalt zählt.
+            filled = bool(value) if name == "avatar" else bool(str(value).strip())
+            if not filled:
+                missing.append(name)
+        return missing
 
-    def refresh_directory_visibility(self, save: bool = True) -> None:
+    def compute_directory_ready(self) -> bool:
+        return not self.missing_directory_fields() and self.user.is_active
+
+    def refresh_directory_visibility(self, save: bool = True) -> bool:
+        """
+        Aktualisiert die Sichtbarkeit und meldet den Übergang.
+        """
         ready = self.compute_directory_ready()
+        became_ready = ready and not self.is_directory_visible
         if self.is_directory_visible != ready:
             self.is_directory_visible = ready
             if save:
                 self.save(update_fields=["is_directory_visible"])
+        return became_ready
+
+    def anonymize(self) -> None:
+        """
+        Entfernt alle personenbezogenen Inhalte aus dem Profil bei Löschen.
+        """
+        for name in ("avatar", "avatar_original"):
+            field = getattr(self, name)
+            if field:
+                # --- save=False: Es folgt ohnehin ein save() über alle Felder.
+                field.delete(save=False)
+
+        self.headline = ""
+        self.city = ""
+        self.profession = ""
+        self.company = ""
+        self.position = ""
+        self.bio = ""
+        self.can_help_with = ""
+        self.looking_for = ""
+        self.tags = []
+        self.languages = []
+        self.achievements = []
+        self.telegram_username = ""
+        self.linkedin_url = ""
+        self.website_url = ""
+        self.telegram_group_url = ""
+        self.contact_mode = ContactMode.CLOSED
+        self.is_directory_visible = False
+        self.slug = f"deleted-{self.user_id}"
+
+        # Der Bildzuschnitt beschreibt ein Bild, das es nicht mehr gibt. Kein
+        # Personenbezug, aber auch kein Grund, ihn liegen zu lassen: Die Regel
+        # "alles außer Primär- und Fremdschlüssel geht in den Ausgangszustand"
+        # ist leichter zu verteidigen als eine Liste harmloser Ausnahmen.
+        #
+        # Die Werte kommen aus den Feld-Defaults und nicht als Literale –
+        # ändert sich ein Default, folgt die Anonymisierung automatisch.
+        for name in (
+            "avatar_position_x",
+            "avatar_position_y",
+            "avatar_scale",
+            "avatar_crop_size",
+        ):
+            setattr(self, name, self._meta.get_field(name).default)
+
+        self.save()
 
     def ensure_unique_slug(self, base: str | None = None) -> None:
         if self.slug:
