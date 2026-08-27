@@ -29,7 +29,6 @@ def clear_invite_sent_at(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("bot", "0004_telegramforumtopic_and_more"),
     ]

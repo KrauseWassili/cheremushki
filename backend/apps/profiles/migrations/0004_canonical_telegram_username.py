@@ -48,7 +48,6 @@ def noop(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("profiles", "0003_alter_memberprofile_avatar_and_more"),
     ]

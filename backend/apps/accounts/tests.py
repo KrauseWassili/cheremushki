@@ -35,7 +35,6 @@ VALID_PASSWORD = "Str0ng!Passwort"
 
 @override_settings(CACHES=LOCMEM_CACHE)
 class ThrottleScopeTests(TestCase):
-
     def setUp(self):
         self.client = APIClient()
         cache.clear()
@@ -192,8 +191,7 @@ class InviteGateTests(TestCase):
             "apps.bot.tasks.profile_post.sync_telegram_profile_post.delay"
         ).start()
         self.reminder = mock.patch(
-            "apps.bot.tasks.profile_post.send_profile_completion_reminder"
-            ".apply_async"
+            "apps.bot.tasks.profile_post.send_profile_completion_reminder.apply_async"
         ).start()
         self.addCleanup(mock.patch.stopall)
 
@@ -493,7 +491,6 @@ class AccountDeletionTests(TestCase):
 
 
 class PurgeTelegramPresenceTests(TestCase):
-
     def setUp(self):
         self.api = mock.patch(
             "apps.bot.services.telegram._api_call", return_value={}

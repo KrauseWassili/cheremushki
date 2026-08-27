@@ -445,7 +445,6 @@ class UpdateModeCheckTests(SimpleTestCase):
 
 
 class CeleryTaskDiscoveryTests(SimpleTestCase):
-
     def test_worker_finds_all_tasks(self):
         code = (
             "import os, django;"

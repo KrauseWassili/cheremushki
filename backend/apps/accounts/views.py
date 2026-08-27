@@ -46,7 +46,6 @@ from .tasks import send_activation_email
 
 
 class LoginViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
-
     permission_classes = [AllowAny]
     queryset = CustomUser.objects.none()
     serializer_class = CustomTokenObtainPairSerializer
@@ -255,7 +254,6 @@ class LogoutViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
 
 
 class PasswordViewSet(viewsets.GenericViewSet):
-
     queryset = CustomUser.objects.none()
 
     def get_permissions(self):

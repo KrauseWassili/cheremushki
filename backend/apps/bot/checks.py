@@ -29,7 +29,7 @@ def check_telegram_credentials(app_configs, **kwargs):
     if not getattr(settings, "TELEGRAM_CHAT_ID", ""):
         problems.append(
             Warning(
-                "TELEGRAM_CHAT_ID ist leer – Invites und Profilposts schlagen " "fehl.",
+                "TELEGRAM_CHAT_ID ist leer – Invites und Profilposts schlagen fehl.",
                 hint="TELEGRAM_CHAT_ID in der .env setzen.",
                 id="bot.W002",
             )
