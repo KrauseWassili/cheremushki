@@ -1,18 +1,11 @@
-"""Anbindung an die Telegram-Bot-API.
-
-Zwei Grundsätze, die den Aufbau dieser Datei erklären:
-
-1. **Der Bot-Token darf nirgends in einem Log landen.** Er steckt in jeder
-   Request-URL, und ``requests``-Exceptions tragen die URL in ihrer Message.
-   Deshalb gibt es genau eine Stelle (:func:`_api_call`), die HTTP spricht, und
-   sie übersetzt Transportfehler in :class:`TelegramTransportError` – ohne URL
-   und ohne ``__cause__``.
-2. **Ein neuer Post im Kanal ist nicht zurücknehmbar, ein Retry schon.** Der
-   Fallback von "bearbeiten" auf "neu senden" greift nur, wenn die alte
-   Nachricht nachweislich verloren ist. Alles andere wird weitergereicht,
-   damit der Celery-Retry greift.
+"""
+Anbindung an die Telegram-Bot-API.
 """
 
+# Nötig, weil MemberProfile nur unter TYPE_CHECKING importiert wird: Ohne
+# aufgeschobene Auswertung wertet Python die Annotation zur Laufzeit aus und
+# bricht mit NameError ab – beim Import des Moduls, also beim Start des
+# Celery-Workers.
 from __future__ import annotations
 
 import hashlib
@@ -54,10 +47,10 @@ TOPIC_DISCOVERY_LIMIT = 100
 PEOPLE_TOPIC_CACHE_KEY = "telegram_people_topic_id"
 PEOPLE_TOPIC_CACHE_TTL_SECONDS = 60 * 60
 
-
-# --------------------------------------------------------------------------- #
-# HTTP
-# --------------------------------------------------------------------------- #
+# Welche Update-Typen wir überhaupt zugestellt bekommen wollen. Als Konstante,
+# weil Webhook-Registrierung und getUpdates dieselbe Liste brauchen, weichen
+# sie ab, verhält sich Polling anders als Produktion.
+ALLOWED_UPDATE_TYPES = ("chat_member", "message", "channel_post", "my_chat_member")
 
 
 def _api_call(
@@ -67,14 +60,15 @@ def _api_call(
     files: dict | None = None,
     timeout: int = API_TIMEOUT_SECONDS,
 ) -> Any:
-    """Einzige Ein- und Ausgangstür zur Bot-API.
+    """
+    Einzige Ein- und Ausgangstür zur Bot-API.
 
     Telegram akzeptiert für alle Methoden POST, deshalb gibt es hier keinen
     zweiten Codepfad für GET.
 
     Raises:
         TelegramTransportError: Netzwerkfehler oder unlesbare Antwort.
-        TelegramAPIError: Telegram hat mit ``ok: false`` geantwortet.
+        TelegramAPIError: Telegram hat mit ok: false geantwortet.
     """
     try:
         response = requests.post(
@@ -102,11 +96,6 @@ def _api_call(
     return payload["result"]
 
 
-# --------------------------------------------------------------------------- #
-# Invites, Nachrichten, Mitgliedschaft
-# --------------------------------------------------------------------------- #
-
-
 def create_single_use_invite_link(name: str) -> str:
     result = _api_call(
         "createChatInviteLink",
@@ -122,9 +111,7 @@ def create_single_use_invite_link(name: str) -> str:
 def get_updates(offset: int | None = None, timeout: int = 30) -> list[dict]:
     data: dict[str, Any] = {
         "timeout": timeout,
-        "allowed_updates": json.dumps(
-            ["chat_member", "message", "channel_post", "my_chat_member"]
-        ),
+        "allowed_updates": json.dumps(list(ALLOWED_UPDATE_TYPES)),
     }
     if offset is not None:
         data["offset"] = offset
@@ -132,6 +119,45 @@ def get_updates(offset: int | None = None, timeout: int = 30) -> list[dict]:
     return _api_call(
         "getUpdates", data=data, timeout=timeout + LONG_POLL_MARGIN_SECONDS
     )
+
+
+# Ausstehende Updates nie verwerfen: Darunter sind echte Gruppenbeitritte.
+# Ein verworfenes chat_member-Update heißt, dass jemand in der Gruppe steht,
+# dessen Invite nie als genutzt markiert wird – und der damit keine
+# Profilkarte bekommt. Deshalb keine Option, sondern eine Festlegung.
+KEEP_PENDING_UPDATES = "false"
+
+
+def set_webhook(url: str) -> None:
+    """
+    Registriert den Webhook bei Telegram.
+    """
+    secret = getattr(settings, "TELEGRAM_WEBHOOK_SECRET", "") or ""
+    if not secret:
+        raise TelegramConfigurationError(
+            "TELEGRAM_WEBHOOK_SECRET ist leer – der Endpunkt würde jede "
+            "Anfrage ablehnen, die Registrierung wäre wirkungslos."
+        )
+
+    _api_call(
+        "setWebhook",
+        data={
+            "url": url,
+            "secret_token": secret,
+            "allowed_updates": json.dumps(list(ALLOWED_UPDATE_TYPES)),
+            "drop_pending_updates": KEEP_PENDING_UPDATES,
+        },
+    )
+
+
+def delete_webhook() -> None:
+    """Entfernt die Webhook-Registrierung."""
+    _api_call("deleteWebhook", data={"drop_pending_updates": KEEP_PENDING_UPDATES})
+
+
+def get_webhook_info() -> dict:
+    result = _api_call("getWebhookInfo")
+    return result if isinstance(result, dict) else {}
 
 
 def send_private_message(telegram_user_id: int, text: str) -> bool:
@@ -199,11 +225,6 @@ def find_invite_by_telegram_user_id(telegram_user_id: int) -> TelegramInvite | N
     )
 
 
-# --------------------------------------------------------------------------- #
-# Forum-Topics
-# --------------------------------------------------------------------------- #
-
-
 def _people_topic_name() -> str:
     return str(
         getattr(settings, "TELEGRAM_PEOPLE_TOPIC_NAME", "Наши люди") or ""
@@ -211,11 +232,8 @@ def _people_topic_name() -> str:
 
 
 def remember_forum_topic(name: str, thread_id: int) -> None:
-    """Persistiert eine entdeckte Topic-Zuordnung.
-
-    Die Entdeckung passiert im Web-Prozess, gebraucht wird sie im
-    Celery-Worker – deshalb DB statt Cache. Der Cache davor ist nur ein
-    Beschleuniger für den heißen Pfad.
+    """
+    Persistiert eine entdeckte Topic-Zuordnung.
     """
     name = (name or "").strip()
     if not name:
@@ -233,7 +251,9 @@ def remember_forum_topic(name: str, thread_id: int) -> None:
 
 
 def process_forum_topic_message(message: dict) -> None:
-    """Entdeckt Topic-IDs aus Service-Nachrichten der Gruppe."""
+    """
+    Topic-IDs aus Service-Nachrichten der Gruppe.
+    """
     created = message.get("forum_topic_created")
     edited = message.get("forum_topic_edited")
     thread_id = message.get("message_thread_id")
@@ -323,11 +343,6 @@ def _discover_people_topic_id(expected: str) -> int | None:
     return found
 
 
-# --------------------------------------------------------------------------- #
-# Profilkarte
-# --------------------------------------------------------------------------- #
-
-
 @dataclass(frozen=True)
 class ProfileCardPayload:
     """Alles, was einen Profilpost inhaltlich ausmacht."""
@@ -339,7 +354,8 @@ class ProfileCardPayload:
 
     @property
     def digest(self) -> str:
-        """Fingerabdruck des Postinhalts.
+        """
+        Fingerabdruck des Postinhalts.
 
         Stimmt er mit dem gespeicherten überein, entfällt der Telegram-Call –
         die billigste Antwort ist die, die man gar nicht erst erfragt.
@@ -364,12 +380,8 @@ def build_profile_card_payload(profile: MemberProfile) -> ProfileCardPayload:
 def post_or_update_profile_card(
     profile: MemberProfile, invite: TelegramInvite
 ) -> TelegramInvite:
-    """Postet die Profilkarte oder aktualisiert den bestehenden Post.
-
-    Ein neuer Post entsteht nur, wenn es noch keinen gibt oder der bestehende
-    nachweislich nicht mehr bearbeitbar ist. Jeder andere Fehler wird
-    weitergereicht, damit der Celery-Retry greift: Ein Duplikat im Kanal ist
-    für alle sichtbar und nicht zurücknehmbar, ein Retry kostet nichts.
+    """
+    Postet die Profilkarte oder aktualisiert den bestehenden Post.
     """
     topic_id = resolve_people_topic_id()
     if topic_id is None:
@@ -513,9 +525,34 @@ def _save_send_result(
     return invite
 
 
-# --------------------------------------------------------------------------- #
-# Updates
-# --------------------------------------------------------------------------- #
+def delete_profile_card(invite: TelegramInvite) -> bool:
+    """
+    Entfernt den Profilpost aus dem Kanal.
+    """
+    if not invite.profile_message_id:
+        return True
+
+    try:
+        _api_call(
+            "deleteMessage",
+            data={
+                "chat_id": invite.profile_chat_id or settings.TELEGRAM_CHAT_ID,
+                "message_id": invite.profile_message_id,
+            },
+        )
+    except (TelegramAPIError, TelegramTransportError) as exc:
+        logger.error(
+            "Profilpost user=%s konnte NICHT gelöscht werden (%s) – manuelles "
+            "Entfernen aus «Наши люди» nötig",
+            invite.user_id,
+            exc,
+        )
+        return False
+
+    invite.profile_message_id = None
+    invite.profile_content_hash = ""
+    invite.save(update_fields=["profile_message_id", "profile_content_hash"])
+    return True
 
 
 def process_chat_member_update(chat_member_update: dict) -> bool:
@@ -601,22 +638,15 @@ def _reject_duplicate_account(invite: TelegramInvite, telegram_user_id: int) -> 
 
 
 def _schedule_post_join_tasks(user_id: int) -> None:
-    # Lazy import: Die Tasks importieren diesen Service.
-    from apps.bot.tasks.profile_post import (
-        PROFILE_REMINDER_DELAY_SECONDS,
-        send_profile_completion_reminder,
-        sync_telegram_profile_post,
-    )
+    """
+    Stößt an, was nach einem Gruppenbeitritt folgt.
+
+    Kein Profil-Reminder mehr: Wer beitreten kann, hat eine Einladung, und die
+    gibt es nur mit vollständigem Profil.
+    """
+    from apps.bot.tasks.profile_post import sync_telegram_profile_post
 
     sync_telegram_profile_post.delay(user_id)
-
-    # Bewusst zwei Reminder: einer sofort beim Beitritt, einer nach 24 h. Der
-    # Task bricht ab, sobald das Profil vollständig ist, und zählt maximal zwei
-    # Versendungen. Falls die Sofort-Mail unerwünscht ist, ist hier die Stelle.
-    send_profile_completion_reminder.delay(user_id)
-    send_profile_completion_reminder.apply_async(
-        args=[user_id], countdown=PROFILE_REMINDER_DELAY_SECONDS
-    )
 
 
 def process_telegram_update(update: dict) -> None:
