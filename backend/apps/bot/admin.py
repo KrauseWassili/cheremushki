@@ -1,6 +1,6 @@
 from unfold.admin import ModelAdmin
 from django.contrib import admin
-from .models import TelegramInvite
+from .models import TelegramForumTopic, TelegramInvite
 
 
 @admin.register(TelegramInvite)
@@ -21,5 +21,13 @@ class TelegramInviteAdmin(ModelAdmin):
         "used_at",
         "profile_posted_at",
         "profile_synced_at",
+        "profile_content_hash",
         "telegram_user_id",
     )
+
+
+@admin.register(TelegramForumTopic)
+class TelegramForumTopicAdmin(ModelAdmin):
+    list_display = ("name", "thread_id", "updated_at")
+    search_fields = ("name",)
+    readonly_fields = ("updated_at",)
