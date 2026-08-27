@@ -4,7 +4,6 @@ import type { MemberProfile } from "@/types/member";
 import { MemberCard } from "./member-card";
 import { MemberFilterSelect } from "./member-filter-select";
 import { useMemo, useState } from "react";
-import { isProfileReadyForDirectory } from "@/lib/profile";
 import { Button } from "@/components/ui/button";
 import { TextField } from "@/components/ui/text-field";
 
@@ -37,20 +36,6 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
     const normalizedQuery = query.trim().toLocaleLowerCase("ru");
 
     return members.filter((member) => {
-      if (
-        !isProfileReadyForDirectory({
-          avatarUrl: member.avatarUrl,
-          firstName: member.fullName,
-          city: member.city,
-          headline: member.headline,
-          bio: member.bio,
-          canHelpWith: member.canHelpWith,
-          lookingFor: member.lookingFor,
-        })
-      ) {
-        return false;
-      }
-
       const searchableText = [
         member.fullName,
         member.headline,

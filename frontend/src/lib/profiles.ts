@@ -33,6 +33,14 @@ type ApiMemberProfile = {
     telegram_group_url?: string;
     is_directory_visible?: boolean;
     joined_at: string;
+    // Nur auf /profiles/user/me/ – das öffentliche Verzeichnis liefert das nicht.
+    directory_ready?: boolean;
+    // Backend Feldnamen der noch leeren Pflichtfelder, in Formularreihenfolge.
+    missing_fields?: string[];
+    // Vollständige Pflichtfeldliste – Grundlage des Live-Zählers im Formular.
+    required_fields?: string[];
+    // Ist die Telegram-Einladung versandt? Kommt mit jedes Request mit.
+    invite_sent?: boolean;
 };
 
 type PaginatedProfiles = {
@@ -247,7 +255,7 @@ export async function sendContactRequest(
     });
 }
 
-/** dataURL → Blob für Avatar-Upload */
+// dataURL. Blob für Avatar-Upload
 export async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
     const response = await fetch(dataUrl);
     return response.blob();

@@ -3,17 +3,16 @@
 import {createContext, type ReactNode, useCallback, useContext, useEffect, useState,} from "react";
 import {useRouter} from "next/navigation";
 import {
-  clearTokens,
-  fetchCurrentUser,
-  hasAuthTokens,
-  login as loginRequest,
-  logoutRequest,
-  register as registerRequest,
-  storeTokens,
-  updateCurrentUser as updateCurrentUserRequest,
+    clearTokens,
+    fetchCurrentUser,
+    hasAuthTokens,
+    login as loginRequest,
+    logoutRequest,
+    register as registerRequest,
+    storeTokens,
+    updateCurrentUser as updateCurrentUserRequest,
 } from "@/lib/auth";
-import {isProfileReadyForDirectory} from "@/lib/profile";
-import {fetchMyProfile, mapApiProfileToDraft} from "@/lib/profiles";
+import {fetchMyProfile} from "@/lib/profiles";
 import type {User} from "@/types/user";
 
 type LoginMode = "login" | "register";
@@ -114,13 +113,9 @@ export function AppProvider({children}: { children: ReactNode }) {
 
             try {
                 const apiProfile = await fetchMyProfile();
-                const draft = mapApiProfileToDraft(apiProfile, {
-                    firstName: currentUser.first_name,
-                    lastName: currentUser.last_name,
-                    email: currentUser.email,
-                });
+                // Unvollständiges Profil führt auf /profile: Dort hängt die Telegram Einladung.
                 router.push(
-                    isProfileReadyForDirectory(draft) ? "/members" : "/profile",
+                    apiProfile.directory_ready ? "/members" : "/profile",
                 );
             } catch {
                 router.push("/profile");
