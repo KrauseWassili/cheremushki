@@ -341,7 +341,7 @@ class PollTelegramUpdatesTests(SimpleTestCase):
         self.assertEqual(self.process.call_count, 2)
         self.assertEqual(self.offset(), 5)
 
-    def test_lock_verhindert_ueberlappende_laeufe(self):
+    def test_lock_prevents_overlapping_runs(self):
         cache.add(
             telegram_user_tasks.POLL_LOCK_KEY,
             "1",
@@ -350,7 +350,7 @@ class PollTelegramUpdatesTests(SimpleTestCase):
         telegram_user_tasks.poll_telegram_updates_task()
         self.get_updates.assert_not_called()
 
-    def test_lock_wird_auch_bei_fehler_freigegeben(self):
+    def test_lock_is_released_even_on_error(self):
         """
         Ein hängender Lock würde den Poller bis zum TTL-Ablauf stilllegen.
         """

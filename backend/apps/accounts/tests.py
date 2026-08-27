@@ -465,7 +465,8 @@ class AccountDeletionTests(TestCase):
 
         response = APIClient().post(
             "/api/v1/accounts/login/refresh/",
-            {"refresh": refresh},
+            # str(): RefreshToken ist ein Objekt, nicht der Token-String.
+            {"refresh": str(refresh)},
             format="json",
         )
         self.assertEqual(response.status_code, 401)
