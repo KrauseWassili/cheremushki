@@ -164,17 +164,20 @@ class MyProfileSerializer(MemberProfileSerializer):
     directory_ready = serializers.SerializerMethodField(read_only=True)
     missing_fields = serializers.SerializerMethodField(read_only=True)
     required_fields = serializers.SerializerMethodField(read_only=True)
+    invite_sent = serializers.SerializerMethodField(read_only=True)
 
     class Meta(MemberProfileSerializer.Meta):
         fields = MemberProfileSerializer.Meta.fields + [
             "directory_ready",
             "missing_fields",
             "required_fields",
+            "invite_sent",
         ]
         read_only_fields = MemberProfileSerializer.Meta.read_only_fields + [
             "directory_ready",
             "missing_fields",
             "required_fields",
+            "invite_sent",
         ]
 
     async def get_directory_ready(self, obj: MemberProfile) -> bool:
@@ -182,6 +185,17 @@ class MyProfileSerializer(MemberProfileSerializer):
 
     async def get_missing_fields(self, obj: MemberProfile) -> list[str]:
         return await sync_to_async(obj.missing_directory_fields)()
+
+    async def get_invite_sent(self, obj: MemberProfile) -> bool:
+
+        def _check() -> bool:
+            from apps.bot.models import TelegramInvite
+
+            return TelegramInvite.objects.filter(
+                user_id=obj.user_id, invite_sent_at__isnull=False
+            ).exists()
+
+        return await sync_to_async(_check)()
 
     async def get_required_fields(self, obj: MemberProfile) -> list[str]:
         return list(DIRECTORY_REQUIRED_FIELDS)
