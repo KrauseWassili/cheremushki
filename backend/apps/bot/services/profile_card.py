@@ -40,6 +40,15 @@ def resolve_profile_link_base() -> str:
     return str(mock).rstrip("/")
 
 
+def resolve_direct_telegram_username(profile: MemberProfile) -> str | None:
+    if profile.contact_mode != ContactMode.DIRECT:
+        return None
+
+    if not profile.telegram_username:
+        return None
+    return normalize_telegram_username(profile.telegram_username)
+
+
 def build_profile_url(profile: MemberProfile) -> str:
     slug = profile.slug or f"member-{profile.user_id}"
     return f"{resolve_profile_link_base()}/members/{slug}"
@@ -74,6 +83,12 @@ def build_profile_caption(profile: MemberProfile) -> str:
         f"<b>Теги</b>\n"
         f"{tags_line}"
     )
+    username = resolve_direct_telegram_username(profile)
+    if username:
+        caption += (
+            f"\n\n<b>Telegram</b>\n"
+            f'<a href="{build_telegram_dm_url(username)}">@{username}</a>'
+        )
     return caption[:CAPTION_MAX_LENGTH]
 
 
@@ -98,21 +113,21 @@ def build_profile_keyboard(profile: MemberProfile) -> dict:
         ]
     ]
 
-    if profile.contact_mode == ContactMode.DIRECT and profile.telegram_username:
-        username = normalize_telegram_username(profile.telegram_username)
-        if username:
-            keyboard.append(
-                [
-                    {
-                        "text": "Написать сообщение",
-                        "url": build_telegram_dm_url(username),
-                    }
-                ]
-            )
-        else:
+    username = resolve_direct_telegram_username(profile)
+
+    if username:
+        keyboard.append(
+            [
+                {
+                    "text": "Написать сообщение",
+                    "url": build_telegram_dm_url(username),
+                }
+            ]
+        )
+    else:
+        if profile.contact_mode == ContactMode.DIRECT and profile.telegram_username:
             logger.warning(
-                "Profil user=%s: telegram_username %r nicht verwertbar – "
-                "DM-Button entfällt",
+                "Profil user=%s: telegram_username %r nicht verwertbar – DM-Button entfällt",
                 profile.user_id,
                 profile.telegram_username,
             )
