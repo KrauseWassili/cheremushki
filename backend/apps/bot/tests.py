@@ -16,7 +16,7 @@ from apps.bot.exceptions import TelegramAPIError, TelegramTransportError
 from apps.bot.models import TelegramInvite
 from apps.bot.permissions import SECRET_HEADER, IsTelegramWebhook
 from apps.bot.services import telegram as telegram_service
-from apps.bot.services.profile_card import build_profile_keyboard
+from apps.bot.services.profile_card import build_profile_keyboard, build_profile_caption
 from apps.bot.tasks import telegram_user as telegram_user_tasks
 from apps.profiles.models import ContactMode, MemberProfile
 
@@ -472,3 +472,23 @@ class CeleryTaskDiscoveryTests(SimpleTestCase):
             0,
             "Celery hat keine Projekt-Tasks gefunden.",
         )
+
+
+class ProfileCaptionContactTests(SimpleTestCase):
+    def test_direct_shows_handle_in_caption_and_button(self):
+        profile = make_profile(contact_mode=ContactMode.DIRECT, telegram_username="durov")
+        caption = build_profile_caption(profile)
+        self.assertIn("@durov", caption)
+        self.assertIn("https://t.me/durov", caption)
+        self.assertEqual(len(build_profile_keyboard(profile)["inline_keyboard"]), 2)
+
+    def test_request_hides_handle_even_if_username_is_set(self):
+        profile = make_profile(contact_mode=ContactMode.REQUEST, telegram_username="durov")
+        caption = build_profile_caption(profile)
+        self.assertNotIn("durov", caption)
+        self.assertEqual(len(build_profile_keyboard(profile)["inline_keyboard"]), 1)
+
+    def test_direct_without_username_has_no_contact(self):
+        profile = make_profile(contact_mode=ContactMode.DIRECT, telegram_username="")
+        self.assertNotIn("Telegram", build_profile_caption(profile))
+        self.assertEqual(len(build_profile_keyboard(profile)["inline_keyboard"]), 1)
