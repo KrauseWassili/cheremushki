@@ -16,7 +16,11 @@ from apps.bot.exceptions import TelegramAPIError, TelegramTransportError
 from apps.bot.models import TelegramInvite
 from apps.bot.permissions import SECRET_HEADER, IsTelegramWebhook
 from apps.bot.services import telegram as telegram_service
-from apps.bot.services.profile_card import build_profile_keyboard, build_profile_caption
+from apps.bot.services.profile_card import (
+    CAPTION_MAX_LENGTH,
+    build_profile_caption,
+    build_profile_keyboard,
+)
 from apps.bot.tasks import telegram_user as telegram_user_tasks
 from apps.profiles.models import ContactMode, MemberProfile
 
@@ -51,6 +55,8 @@ class ProfileKeyboardTests(SimpleTestCase):
         )
         rows = build_profile_keyboard(profile)["inline_keyboard"]
         self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0][0]["text"], "Открыть профиль в клубе")
+        self.assertIn("/members/anna-b", rows[0][0]["url"])
         self.assertEqual(rows[1][0]["url"], "https://t.me/durov")
 
     def test_request_mode_does_not_display_a_dm_button(self):
@@ -59,6 +65,16 @@ class ProfileKeyboardTests(SimpleTestCase):
         )
         rows = build_profile_keyboard(profile)["inline_keyboard"]
         self.assertEqual(len(rows), 1)
+
+    def test_group_and_closed_do_not_display_a_dm_button(self):
+        for mode in (ContactMode.GROUP, ContactMode.CLOSED):
+            with self.subTest(contact_mode=mode):
+                profile = make_profile(
+                    contact_mode=mode, telegram_username="durov"
+                )
+                rows = build_profile_keyboard(profile)["inline_keyboard"]
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0][0]["text"], "Открыть профиль в клубе")
 
     def test_invalid_handle_is_logged(self):
         profile = make_profile(
@@ -485,10 +501,51 @@ class ProfileCaptionContactTests(SimpleTestCase):
     def test_request_hides_handle_even_if_username_is_set(self):
         profile = make_profile(contact_mode=ContactMode.REQUEST, telegram_username="durov")
         caption = build_profile_caption(profile)
-        self.assertNotIn("durov", caption)
+        self.assertNotIn("@durov", caption)
+        self.assertNotIn("t.me/durov", caption)
+        self.assertNotIn("<b>Telegram</b>", caption)
+        self.assertEqual(len(build_profile_keyboard(profile)["inline_keyboard"]), 1)
+
+    def test_group_and_closed_hide_handle_even_if_username_is_set(self):
+        for mode in (ContactMode.GROUP, ContactMode.CLOSED):
+            with self.subTest(contact_mode=mode):
+                profile = make_profile(
+                    contact_mode=mode, telegram_username="durov"
+                )
+                caption = build_profile_caption(profile)
+                self.assertNotIn("@durov", caption)
+                self.assertNotIn("t.me/durov", caption)
+                self.assertNotIn("<b>Telegram</b>", caption)
+                self.assertEqual(
+                    len(build_profile_keyboard(profile)["inline_keyboard"]), 1
+                )
+
+    def test_direct_with_invalid_handle_has_no_contact(self):
+        profile = make_profile(
+            contact_mode=ContactMode.DIRECT,
+            telegram_username="https://evil.example.com/x",
+        )
+        caption = build_profile_caption(profile)
+        self.assertNotIn("<b>Telegram</b>", caption)
+        self.assertNotIn("t.me/", caption)
         self.assertEqual(len(build_profile_keyboard(profile)["inline_keyboard"]), 1)
 
     def test_direct_without_username_has_no_contact(self):
         profile = make_profile(contact_mode=ContactMode.DIRECT, telegram_username="")
         self.assertNotIn("Telegram", build_profile_caption(profile))
         self.assertEqual(len(build_profile_keyboard(profile)["inline_keyboard"]), 1)
+
+    def test_long_bio_keeps_telegram_footer_intact(self):
+        profile = make_profile(
+            contact_mode=ContactMode.DIRECT,
+            telegram_username="durov",
+            bio="Б" * 2000,
+        )
+        caption = build_profile_caption(profile)
+        self.assertLessEqual(len(caption), CAPTION_MAX_LENGTH)
+        self.assertEqual(caption.count("<a "), 1)
+        self.assertEqual(caption.count("</a>"), 1)
+        self.assertIn("@durov", caption)
+        self.assertIn("https://t.me/durov", caption)
+        self.assertTrue(caption.endswith("</a>"))
+        self.assertEqual(len(build_profile_keyboard(profile)["inline_keyboard"]), 2)

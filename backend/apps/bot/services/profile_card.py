@@ -41,12 +41,37 @@ def resolve_profile_link_base() -> str:
 
 
 def resolve_direct_telegram_username(profile: MemberProfile) -> str | None:
+    """
+    Liefert den Telegram Handle nur bei ContactMode.DIRECT.
+
+    Der Post ist für die ganze Gruppe sichtbar, der Handle würde also allen
+    Mitgliedern offen liegen. Nur dieser Kontaktmodus erlaubt das ausdrücklich.
+    """
     if profile.contact_mode != ContactMode.DIRECT:
         return None
 
     if not profile.telegram_username:
         return None
     return normalize_telegram_username(profile.telegram_username)
+
+
+def _truncate_at_line(text: str, max_len: int) -> str:
+    if len(text) <= max_len:
+        return text
+    cut = text[:max_len]
+    newline = cut.rfind("\n")
+    if newline != -1:
+        return cut[:newline]
+    return cut
+
+
+def _fit_caption(body: str, footer: str = "") -> str:
+    if not footer:
+        return _truncate_at_line(body, CAPTION_MAX_LENGTH)
+    if len(footer) > CAPTION_MAX_LENGTH:
+        return _truncate_at_line(body, CAPTION_MAX_LENGTH)
+    body = _truncate_at_line(body, CAPTION_MAX_LENGTH - len(footer))
+    return body + footer
 
 
 def build_profile_url(profile: MemberProfile) -> str:
@@ -84,25 +109,19 @@ def build_profile_caption(profile: MemberProfile) -> str:
         f"{tags_line}"
     )
     username = resolve_direct_telegram_username(profile)
+    footer = ""
     if username:
-        caption += (
+        footer = (
             f"\n\n<b>Telegram</b>\n"
             f'<a href="{build_telegram_dm_url(username)}">@{username}</a>'
         )
-    return caption[:CAPTION_MAX_LENGTH]
+    return _fit_caption(caption, footer)
 
 
 def build_profile_keyboard(profile: MemberProfile) -> dict:
     """
     Baut das Inline-Keyboard unter dem Profilpost.
-
-    Der DM-Button erscheint nur bei ContactMode.DIRECT: Der Post ist für die
-    ganze Gruppe sichtbar, der Button legt den Telegram-Handle also allen
-    Mitgliedern offen. Nur dieser Kontaktmodus erlaubt das ausdrücklich.
-
-    Der Username wird hier erneut geprüft, obwohl der Serializer bereits
-    kanonisiert. Das ist ein Gate, keine Reparatur: es schützt Datensätze aus
-    Admin, Shell und Fixtures, die den Serializer nie gesehen haben.
+    DM-Button nur, wenn resolve_direct_telegram_username einen Handle liefert.
     """
     keyboard = [
         [
@@ -124,13 +143,12 @@ def build_profile_keyboard(profile: MemberProfile) -> dict:
                 }
             ]
         )
-    else:
-        if profile.contact_mode == ContactMode.DIRECT and profile.telegram_username:
-            logger.warning(
-                "Profil user=%s: telegram_username %r nicht verwertbar – DM-Button entfällt",
-                profile.user_id,
-                profile.telegram_username,
-            )
+    elif profile.contact_mode == ContactMode.DIRECT and profile.telegram_username:
+        logger.warning(
+            "Profil user=%s: telegram_username %r nicht verwertbar – DM-Button entfällt",
+            profile.user_id,
+            profile.telegram_username,
+        )
 
     return {"inline_keyboard": keyboard}
 
