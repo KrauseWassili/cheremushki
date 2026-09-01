@@ -69,9 +69,7 @@ class ProfileKeyboardTests(SimpleTestCase):
     def test_group_and_closed_do_not_display_a_dm_button(self):
         for mode in (ContactMode.GROUP, ContactMode.CLOSED):
             with self.subTest(contact_mode=mode):
-                profile = make_profile(
-                    contact_mode=mode, telegram_username="durov"
-                )
+                profile = make_profile(contact_mode=mode, telegram_username="durov")
                 rows = build_profile_keyboard(profile)["inline_keyboard"]
                 self.assertEqual(len(rows), 1)
                 self.assertEqual(rows[0][0]["text"], "Открыть профиль в клубе")
@@ -492,14 +490,18 @@ class CeleryTaskDiscoveryTests(SimpleTestCase):
 
 class ProfileCaptionContactTests(SimpleTestCase):
     def test_direct_shows_handle_in_caption_and_button(self):
-        profile = make_profile(contact_mode=ContactMode.DIRECT, telegram_username="durov")
+        profile = make_profile(
+            contact_mode=ContactMode.DIRECT, telegram_username="durov"
+        )
         caption = build_profile_caption(profile)
         self.assertIn("@durov", caption)
         self.assertIn("https://t.me/durov", caption)
         self.assertEqual(len(build_profile_keyboard(profile)["inline_keyboard"]), 2)
 
     def test_request_hides_handle_even_if_username_is_set(self):
-        profile = make_profile(contact_mode=ContactMode.REQUEST, telegram_username="durov")
+        profile = make_profile(
+            contact_mode=ContactMode.REQUEST, telegram_username="durov"
+        )
         caption = build_profile_caption(profile)
         self.assertNotIn("@durov", caption)
         self.assertNotIn("t.me/durov", caption)
@@ -509,9 +511,7 @@ class ProfileCaptionContactTests(SimpleTestCase):
     def test_group_and_closed_hide_handle_even_if_username_is_set(self):
         for mode in (ContactMode.GROUP, ContactMode.CLOSED):
             with self.subTest(contact_mode=mode):
-                profile = make_profile(
-                    contact_mode=mode, telegram_username="durov"
-                )
+                profile = make_profile(contact_mode=mode, telegram_username="durov")
                 caption = build_profile_caption(profile)
                 self.assertNotIn("@durov", caption)
                 self.assertNotIn("t.me/durov", caption)
@@ -549,3 +549,32 @@ class ProfileCaptionContactTests(SimpleTestCase):
         self.assertIn("https://t.me/durov", caption)
         self.assertTrue(caption.endswith("</a>"))
         self.assertEqual(len(build_profile_keyboard(profile)["inline_keyboard"]), 2)
+
+
+class ProfileCaptionHeadlineTests(SimpleTestCase):
+
+    def italic_line(self, caption: str) -> str:
+        start = caption.index("<i>")
+        end = caption.index("</i>", start) + len("</i>")
+        return caption[start:end]
+
+    def test_headline_only_without_profession_is_the_subtitle(self):
+        profile = make_profile(headline="ЗАГОЛОВОК", profession="")
+        caption = build_profile_caption(profile)
+        self.assertEqual(self.italic_line(caption), "<i>ЗАГОЛОВОК · Berlin</i>")
+
+    def test_profession_does_not_replace_headline_in_subtitle(self):
+        profile = make_profile(headline="ЗАГОЛОВОК", profession="ПРОФЕССИЯ")
+        caption = build_profile_caption(profile)
+        italic = self.italic_line(caption)
+        self.assertEqual(italic, "<i>ЗАГОЛОВОК · Berlin</i>")
+        self.assertNotIn("ПРОФЕССИЯ", italic)
+        self.assertNotIn("ПРОФЕССИЯ", caption)
+
+    def test_empty_headline_falls_back_to_participant_not_profession(self):
+        profile = make_profile(headline="", profession="ПРОФЕССИЯ")
+        caption = build_profile_caption(profile)
+        italic = self.italic_line(caption)
+        self.assertEqual(italic, "<i>Участник · Berlin</i>")
+        self.assertNotIn("ПРОФЕССИЯ", italic)
+        self.assertNotIn("ПРОФЕССИЯ", caption)
