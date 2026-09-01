@@ -22,7 +22,7 @@ import {
   changePassword,
   deleteAccount,
 } from "@/lib/auth";
-import { getProfileRequiredFieldsStatus } from "@/lib/profile";
+import { getProfileCompletionStatus } from "@/lib/profile";
 import {
   dataUrlToBlob,
   fetchMyProfile,
@@ -79,6 +79,10 @@ export default function ProfilePage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
+  // Pflichtfeldliste und Einladungsstand kommen aus dem Backend – die Regel
+  // wird hier nicht nachgebildet, nur angezeigt (siehe lib/profile.ts).
+  const [requiredFields, setRequiredFields] = useState<string[] | undefined>();
+  const [inviteSent, setInviteSent] = useState(false);
   const [accountSettingsPanel, setAccountSettingsPanel] =
     useState<AccountSettingsPanel | null>(null);
 
@@ -92,6 +96,7 @@ export default function ProfilePage() {
       try {
         const api = await fetchMyProfile();
         if (cancelled) return;
+        applyServerState(api);
         setDraft(
           mapApiProfileToDraft(api, {
             firstName: currentUser.first_name,
@@ -116,9 +121,24 @@ export default function ProfilePage() {
     };
   }, [user]);
 
+  /**
+   * Übernimmt die serverseitigen Statusfelder aus einer Profil-Antwort.
+   *
+   * Jeder Pfad, der das Profil ändert, muss das aufrufen – Laden, Speichern
+   * und Avatar-Upload. Sonst bleibt der Einladungsstand stehen und die Seite
+   * fordert zum Ausfüllen auf, obwohl die Einladung längst versandt ist.
+   */
+  function applyServerState(api: {
+    required_fields?: string[];
+    invite_sent?: boolean;
+  }) {
+    setRequiredFields(api.required_fields);
+    setInviteSent(Boolean(api.invite_sent));
+  }
+
   const requiredStatus = useMemo(
-    () => getProfileRequiredFieldsStatus(draft),
-    [draft],
+    () => getProfileCompletionStatus(draft, requiredFields),
+    [draft, requiredFields],
   );
 
   useEscapeKey(isAccountMenuOpen, () => {
@@ -178,6 +198,7 @@ export default function ProfilePage() {
         },
         originalBlob,
       );
+      applyServerState(api);
       setDraft((current) =>
         mapApiProfileToDraft(api, {
           firstName: current.firstName,
@@ -218,6 +239,7 @@ export default function ProfilePage() {
 
     try {
       const api = await saveMyProfile(nextDraft);
+      applyServerState(api);
       setDraft(
         mapApiProfileToDraft(api, {
           firstName: nextDraft.firstName || user?.first_name,
@@ -377,9 +399,21 @@ export default function ProfilePage() {
               Заполнено {requiredStatus.filledCount} из{" "}
               {requiredStatus.totalCount} обязательных полей
             </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Учитываются фотография и поля этого блока.
-            </p>
+
+            {inviteSent ? (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Приглашение в Telegram-группу уже отправлено на твою почту.
+              </p>
+            ) : requiredStatus.isComplete ? (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Сохрани профиль — и придёт приглашение в Telegram-группу.
+              </p>
+            ) : (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Осталось заполнить: {requiredStatus.missingLabels.join(", ")}.
+                После этого придёт приглашение в Telegram-группу.
+              </p>
+            )}
           </div>
         </div>
 

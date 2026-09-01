@@ -1,4 +1,5 @@
 import os
+import warnings
 from datetime import timedelta
 from pathlib import Path
 from typing import List, Tuple
@@ -6,6 +7,7 @@ from typing import List, Tuple
 import environ
 from celery.schedules import crontab
 from corsheaders.defaults import default_methods
+from django.core.exceptions import ImproperlyConfigured
 from django.templatetags.static import static
 
 env = environ.Env(
@@ -21,7 +23,7 @@ DEBUG: bool = env("DEBUG")
 ALLOWED_HOSTS: List[str] = env("ALLOWED_HOSTS").split(",")
 
 DJANGO_APPS: Tuple[str, ...] = (
-# --- django unfold
+    # --- django unfold
     "unfold",  # before django.contrib.admin
     "unfold.contrib.filters",  # optional, if special filters are needed
     "unfold.contrib.forms",  # optional, if special form elements are needed
@@ -161,9 +163,29 @@ UNFOLD = {
 TELEGRAM_BOT_TOKEN = env.str("TELEGRAM_BOT_TOKEN", default="")
 TELEGRAM_CHAT_ID = env.str("TELEGRAM_CHAT_ID", default="")
 TELEGRAM_WEBHOOK_SECRET = env("TELEGRAM_WEBHOOK_SECRET")
-TELEGRAM_PEOPLE_TOPIC_NAME = env.str(
-    "TELEGRAM_PEOPLE_TOPIC_NAME", default="Наши люди"
+
+# Telegram erlaubt entweder einen Webhook oder getUpdates – niemals beides.
+# Solange ein Webhook registriert ist, antwortet getUpdates mit
+# "409 Conflict: can't use getUpdates method while webhook is active".
+#
+# Diese Variable ist die einzige Wahrheit darüber, welcher Weg aktiv ist. Der
+# Beat-Schedule und der Webhook-Endpoint richten sich beide danach, damit es
+# keinen Zustand gibt, in dem beide laufen.
+#
+# Produktion: "webhook". Lokal ohne öffentlich erreichbares https: "polling"
+TELEGRAM_UPDATE_MODE = (
+    env.str("TELEGRAM_UPDATE_MODE", default="polling").strip().lower()
 )
+if TELEGRAM_UPDATE_MODE not in ("webhook", "polling"):
+    raise ImproperlyConfigured(
+        f"TELEGRAM_UPDATE_MODE muss 'webhook' oder 'polling' sein, "
+        f"nicht {TELEGRAM_UPDATE_MODE!r}."
+    )
+
+TELEGRAM_POLL_INTERVAL_SECONDS = env.float(
+    "TELEGRAM_POLL_INTERVAL_SECONDS", default=10.0
+)
+TELEGRAM_PEOPLE_TOPIC_NAME = env.str("TELEGRAM_PEOPLE_TOPIC_NAME", default="Наши люди")
 TELEGRAM_PEOPLE_TOPIC_ID = env.str("TELEGRAM_PEOPLE_TOPIC_ID", default="")
 # Fallback für Profil-Buttons, wenn FRONTEND_URL kein https ist (Telegram lehnt localhost ab).
 TELEGRAM_PROFILE_URL_BASE = env.str(
@@ -187,6 +209,32 @@ CORS_ALLOWED_ORIGINS: List[str] = env.list(
 # ------ Celery / Redis settings ------------------------------------------------------ #
 REDIS_URL = env.str("REDIS_URL", default="")
 
+# ------ Cache ------------------------------------------------------------------------ #
+CACHE_URL = env.str("DJANGO_CACHE_URL", default="") or REDIS_URL
+
+if CACHE_URL:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": CACHE_URL,
+            "KEY_PREFIX": "cheremushki",
+        }
+    }
+elif not DEBUG:
+    raise ImproperlyConfigured("DJANGO_CACHE_URL oder REDIS_URL muss gesetzt sein.")
+else:
+    warnings.warn(
+        "Weder DJANGO_CACHE_URL noch REDIS_URL gesetzt",
+        RuntimeWarning,
+        stacklevel=1,
+    )
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "cheremushki-locmem",
+        }
+    }
+
 CELERY_TIMEZONE = "Europe/Berlin"
 CELERY_BROKER_URL = env("DJANGO_CELERY_BROKER_URL")
 CELERY_RESULT_BACKEND = env("DJANGO_CELERY_RESULT_BACKEND")
@@ -200,6 +248,7 @@ CELERY_RETRY_MAX_TIMES = 15  # 15 retries
 # Leichte Tasks laufen auf der "default"-Queue, rechenintensive auf "generation".
 CELERY_TASK_DEFAULT_QUEUE = "default"
 CELERY_TASK_ROUTES = {
+    "apps.bot.tasks.account.*": {"queue": "default"},
     "apps.bot.tasks.email.*": {"queue": "default"},
     "apps.bot.tasks.profile_post.*": {"queue": "default"},
     "apps.bot.tasks.telegram_user.*": {"queue": "default"},
@@ -208,12 +257,15 @@ CELERY_TASK_ROUTES = {
     "apps.*.tasks.generation.*": {"queue": "generation"},
 }
 
-CELERY_BEAT_SCHEDULE = {
-    "poll-telegram-updates": {
+# Der Poller läuft nur, wenn er der aktive Update-Weg ist. Bei aktivem Webhook
+# wäre er reine Last: alle 10 Sekunden ein Telegram-Call, der mit 409
+# fehlschlägt – 8.640 Fehlversuche pro Tag, die echte Fehler im Log begraben.
+CELERY_BEAT_SCHEDULE: dict = {}
+if TELEGRAM_UPDATE_MODE == "polling":
+    CELERY_BEAT_SCHEDULE["poll-telegram-updates"] = {
         "task": "apps.bot.tasks.telegram_user.poll_telegram_updates_task",
-        "schedule": 10.0,  # alle 10 Sekunden
+        "schedule": TELEGRAM_POLL_INTERVAL_SECONDS,
     }
-}
 
 AUTH_PASSWORD_VALIDATORS = [
     {
@@ -275,15 +327,32 @@ REST_FRAMEWORK = {
         "rest_framework.filters.SearchFilter",
         "rest_framework.filters.OrderingFilter",
     ],
-    # Rate limiting setting that restricts access Telegram Login View.
-    # It prevents a client from sending too many requests in a short period of time.
     "DEFAULT_THROTTLE_CLASSES": [
         "rest_framework.throttling.ScopedRateThrottle",
     ],
     "DEFAULT_THROTTLE_RATES": {
         "contact": "5/hour",
         "password_reset": "5/hour",
+        # Eigener Bucket, nicht mit password_reset geteilt: Sonst verbraucht
+        # ein Mitglied mit einem abgelaufenen Aktivierungslink sein
+        # Reset-Budget und kommt gar nicht mehr weiter.
+        "activate": "10/hour",
+        # Anonyme Endpunkte: Schlüssel ist die Client-IP.
+        "login": "10/hour",
+        "token_refresh": "60/hour",
+        "sign_up": "5/hour",
+        # Authentifizierte Kontoaktionen: Schlüssel ist die User-ID.
+        "account": "20/hour",
     },
+    # Anzahl vertrauenswürdiger Proxys vor der App. 0 = REMOTE_ADDR benutzen
+    # (lokal, ohne Proxy), hinter Nginx auf 1 setzen, dann nimmt DRF den
+    # letzten Eintrag aus X-Forwarded-For, also die von unserem eigenen Proxy
+    # angehängte Client-IP.
+    #
+    # Niemals None/nicht gesetzt lassen: In diesem Fall verwendet DRF die
+    # komplette X-Forwarded-For-Kette als Throttle-Schlüssel, und ein Client
+    # kann sich durch einen selbst gesetzten Header ein neues Limit besorgen.
+    "NUM_PROXIES": env.int("DJANGO_NUM_PROXIES", default=0),
 }
 
 SPECTECULAR_SETTINGS = {
@@ -326,3 +395,27 @@ if DEBUG:
     EMAIL_HOST_PASSWORD = ""
     EMAIL_PORT = env.int("EMAIL_PORT", default=1025)
     EMAIL_USE_TLS = False
+
+# ------ Logging ----------------------------------------------------------------------- #
+# Der Formatter maskiert Bot-Token
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "masked": {
+            "()": "config.logging_filters.SecretMaskingFormatter",
+            "format": "{asctime} {levelname} {name}: {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "masked",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": env.str("DJANGO_LOG_LEVEL", default="INFO"),
+    },
+}

@@ -1,7 +1,15 @@
 from asgiref.sync import sync_to_async
 from adrf import serializers
 from rest_framework.exceptions import ValidationError
-from .models import ContactMode, ContactRequest, MemberProfile
+from .models import (
+    DIRECTORY_REQUIRED_FIELDS,
+    ContactMode,
+    ContactRequest,
+    MemberProfile,
+)
+from apps.bot.tasks.email import send_telegram_invite_email
+from apps.bot.tasks.profile_post import sync_telegram_profile_post
+from .telegram import InvalidTelegramUsername, parse_telegram_username
 
 
 class MemberProfileSerializer(serializers.ModelSerializer):
@@ -110,6 +118,20 @@ class MemberProfileSerializer(serializers.ModelSerializer):
             raise ValidationError("achievements muss eine Liste sein.")
         return [str(item).strip() for item in value if str(item).strip()]
 
+    def validate_telegram_username(self, value):
+        """
+        Validiert die Eingabe, damit in der DB genau ein Format steht.
+        """
+        if not (value or "").strip():
+            return ""
+        try:
+            return parse_telegram_username(value)
+        except InvalidTelegramUsername:
+            raise ValidationError(
+                "Bitte einen gültigen Telegram-Usernamen angeben – "
+                "z. B. @durov oder https://t.me/durov."
+            )
+
     def validate_slug(self, value):
         value = (value or "").strip().lower()
         if not value:
@@ -128,14 +150,71 @@ class MemberProfileSerializer(serializers.ModelSerializer):
             if not instance.slug:
                 instance.ensure_unique_slug()
             instance.save()
-            instance.refresh_directory_visibility(save=True)
-            return instance
+            became_ready = instance.refresh_directory_visibility(save=True)
+            return instance, became_ready
 
-        profile = await sync_to_async(_update)()
-        from apps.bot.tasks.profile_post import sync_telegram_profile_post
-
-        await sync_to_async(sync_telegram_profile_post.delay)(profile.user_id)
+        profile, became_ready = await sync_to_async(_update)()
+        await trigger_profile_side_effects(profile, became_ready)
         return profile
+
+
+class MyProfileSerializer(MemberProfileSerializer):
+    """Einsicht eigenes Profil."""
+
+    directory_ready = serializers.SerializerMethodField(read_only=True)
+    missing_fields = serializers.SerializerMethodField(read_only=True)
+    required_fields = serializers.SerializerMethodField(read_only=True)
+    invite_sent = serializers.SerializerMethodField(read_only=True)
+
+    class Meta(MemberProfileSerializer.Meta):
+        fields = MemberProfileSerializer.Meta.fields + [
+            "directory_ready",
+            "missing_fields",
+            "required_fields",
+            "invite_sent",
+        ]
+        read_only_fields = MemberProfileSerializer.Meta.read_only_fields + [
+            "directory_ready",
+            "missing_fields",
+            "required_fields",
+            "invite_sent",
+        ]
+
+    async def get_directory_ready(self, obj: MemberProfile) -> bool:
+        return await sync_to_async(obj.compute_directory_ready)()
+
+    async def get_missing_fields(self, obj: MemberProfile) -> list[str]:
+        return await sync_to_async(obj.missing_directory_fields)()
+
+    async def get_invite_sent(self, obj: MemberProfile) -> bool:
+
+        def _check() -> bool:
+            from apps.bot.models import TelegramInvite
+
+            return TelegramInvite.objects.filter(
+                user_id=obj.user_id, invite_sent_at__isnull=False
+            ).exists()
+
+        return await sync_to_async(_check)()
+
+    async def get_required_fields(self, obj: MemberProfile) -> list[str]:
+        return list(DIRECTORY_REQUIRED_FIELDS)
+
+
+async def trigger_profile_side_effects(
+    profile: MemberProfile, became_ready: bool
+) -> None:
+    """
+    Löst aus, was nach einer Profiländerung folgt.
+    """
+
+    if became_ready:
+        await sync_to_async(send_telegram_invite_email.delay)(profile.user_id)
+
+    # Der Profilpost ist ein No-Op, solange kein genutzter Invite existiert
+    # der Task prüft das selbst. Er wird trotzdem immer angestoßen, damit
+    # Änderungen an einem schon geposteten Profil im Kanal ankommen.
+    await sync_to_async(sync_telegram_profile_post.delay)(profile.user_id)
 
 
 class AvatarUploadSerializer(serializers.Serializer):

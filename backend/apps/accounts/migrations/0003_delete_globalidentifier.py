@@ -4,13 +4,12 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('accounts', '0002_alter_customuser_is_active'),
+        ("accounts", "0002_alter_customuser_is_active"),
     ]
 
     operations = [
         migrations.DeleteModel(
-            name='GlobalIdentifier',
+            name="GlobalIdentifier",
         ),
     ]

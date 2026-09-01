@@ -2,17 +2,26 @@ from __future__ import annotations
 
 import html
 import io
+import logging
 from typing import TYPE_CHECKING
 
 from django.conf import settings
 from PIL import Image, ImageDraw, ImageFont
 
+from apps.profiles.models import ContactMode
+from apps.profiles.telegram import build_telegram_dm_url, normalize_telegram_username
+
 if TYPE_CHECKING:
     from apps.profiles.models import MemberProfile
+
+logger = logging.getLogger(__name__)
 
 PLACEHOLDER_BIO = "Профиль ещё заполняется"
 PLACEHOLDER_HELP = "Скоро расскажу, чем могу помочь"
 PLACEHOLDER_LOOKING = "Скоро расскажу, что сейчас интересно"
+
+CAPTION_MAX_LENGTH = 1024
+AVATAR_SIZE = 512
 
 
 def _esc(value: str) -> str:
@@ -31,6 +40,40 @@ def resolve_profile_link_base() -> str:
     return str(mock).rstrip("/")
 
 
+def resolve_direct_telegram_username(profile: MemberProfile) -> str | None:
+    """
+    Liefert den Telegram Handle nur bei ContactMode.DIRECT.
+
+    Der Post ist für die ganze Gruppe sichtbar, der Handle würde also allen
+    Mitgliedern offen liegen. Nur dieser Kontaktmodus erlaubt das ausdrücklich.
+    """
+    if profile.contact_mode != ContactMode.DIRECT:
+        return None
+
+    if not profile.telegram_username:
+        return None
+    return normalize_telegram_username(profile.telegram_username)
+
+
+def _truncate_at_line(text: str, max_len: int) -> str:
+    if len(text) <= max_len:
+        return text
+    cut = text[:max_len]
+    newline = cut.rfind("\n")
+    if newline != -1:
+        return cut[:newline]
+    return cut
+
+
+def _fit_caption(body: str, footer: str = "") -> str:
+    if not footer:
+        return _truncate_at_line(body, CAPTION_MAX_LENGTH)
+    if len(footer) > CAPTION_MAX_LENGTH:
+        return _truncate_at_line(body, CAPTION_MAX_LENGTH)
+    body = _truncate_at_line(body, CAPTION_MAX_LENGTH - len(footer))
+    return body + footer
+
+
 def build_profile_url(profile: MemberProfile) -> str:
     slug = profile.slug or f"member-{profile.user_id}"
     return f"{resolve_profile_link_base()}/members/{slug}"
@@ -39,9 +82,9 @@ def build_profile_url(profile: MemberProfile) -> str:
 def build_profile_caption(profile: MemberProfile) -> str:
     user = profile.user
     name = _esc(user.full_name) or _esc(user.email)
-    profession = (profile.profession or profile.headline or "Участник").strip()
+    headline = (profile.headline or "Участник").strip()
     city = (profile.city or "—").strip()
-    subtitle = _esc(f"{profession} · {city}")
+    subtitle = _esc(f"{headline} · {city}")
 
     bio = _esc(profile.bio) or PLACEHOLDER_BIO
     can_help = _esc(profile.can_help_with) or PLACEHOLDER_HELP
@@ -65,22 +108,56 @@ def build_profile_caption(profile: MemberProfile) -> str:
         f"<b>Теги</b>\n"
         f"{tags_line}"
     )
-    return caption[:1024]
+    username = resolve_direct_telegram_username(profile)
+    footer = ""
+    if username:
+        footer = (
+            f"\n\n<b>Telegram</b>\n"
+            f'<a href="{build_telegram_dm_url(username)}">@{username}</a>'
+        )
+    return _fit_caption(caption, footer)
 
 
 def build_profile_keyboard(profile: MemberProfile) -> dict:
-    return {
-        "inline_keyboard": [
-            [{"text": "Открыть профиль", "url": build_profile_url(profile)}]
+    """
+    Baut das Inline-Keyboard unter dem Profilpost.
+    DM-Button nur, wenn resolve_direct_telegram_username einen Handle liefert.
+    """
+    keyboard = [
+        [
+            {
+                "text": "Открыть профиль в клубе",
+                "url": build_profile_url(profile),
+            }
         ]
-    }
+    ]
+
+    username = resolve_direct_telegram_username(profile)
+
+    if username:
+        keyboard.append(
+            [
+                {
+                    "text": "Написать сообщение",
+                    "url": build_telegram_dm_url(username),
+                }
+            ]
+        )
+    elif profile.contact_mode == ContactMode.DIRECT and profile.telegram_username:
+        logger.warning(
+            "Profil user=%s: telegram_username %r nicht verwertbar – DM-Button entfällt",
+            profile.user_id,
+            profile.telegram_username,
+        )
+
+    return {"inline_keyboard": keyboard}
 
 
 def generate_placeholder_avatar(profile: MemberProfile) -> bytes:
     initials_source = f"{profile.user.first_name[:1]}{profile.user.last_name[:1]}"
     initials = (initials_source or "?").upper()
 
-    size = 512
+    size = AVATAR_SIZE
     image = Image.new("RGB", (size, size), color=(36, 48, 66))
     draw = ImageDraw.Draw(image)
 
@@ -101,6 +178,9 @@ def generate_placeholder_avatar(profile: MemberProfile) -> bytes:
 
 
 def resolve_avatar_bytes(profile: MemberProfile) -> tuple[bytes, str]:
+    """
+    Liest den Avatar fällt auf ein generiertes Initialen Bild zurück.
+    """
     if profile.avatar:
         try:
             profile.avatar.open("rb")
@@ -108,6 +188,13 @@ def resolve_avatar_bytes(profile: MemberProfile) -> tuple[bytes, str]:
             profile.avatar.close()
             name = profile.avatar.name.rsplit("/", 1)[-1] or "avatar.jpg"
             return data, name
-        except Exception:
-            pass
+        except (OSError, ValueError) as exc:  # ValueError: SuspiciousFileOperation
+            # Storage nicht erreichbar oder Datei weg: Der Post soll trotzdem
+            # rausgehen, aber der Fehlschlag darf nicht unsichtbar bleiben –
+            # er ändert den Bildinhalt und damit den Post.
+            logger.warning(
+                "Avatar für user=%s nicht lesbar (%s) – Platzhalter wird genutzt",
+                profile.user_id,
+                exc,
+            )
     return generate_placeholder_avatar(profile), "avatar.png"

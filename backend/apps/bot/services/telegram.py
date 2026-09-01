@@ -1,6 +1,18 @@
+"""
+Anbindung an die Telegram-Bot-API.
+"""
+
+# Nötig, weil MemberProfile nur unter TYPE_CHECKING importiert wird: Ohne
+# aufgeschobene Auswertung wertet Python die Annotation zur Laufzeit aus und
+# bricht mit NameError ab – beim Import des Moduls, also beim Start des
+# Celery-Workers.
+from __future__ import annotations
+
+import hashlib
 import json
 import logging
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 import requests
 from django.conf import settings
@@ -8,39 +20,84 @@ from django.core.cache import cache
 from django.db import IntegrityError
 from django.utils import timezone
 
-from ..models import TelegramInvite
+from ..exceptions import (
+    TelegramAPIError,
+    TelegramConfigurationError,
+    TelegramTransportError,
+)
+from ..models import TelegramForumTopic, TelegramInvite
 from .profile_card import (
     build_profile_caption,
     build_profile_keyboard,
     resolve_avatar_bytes,
 )
 
+if TYPE_CHECKING:
+    from apps.profiles.models import MemberProfile
+
 logger = logging.getLogger(__name__)
 
 TELEGRAM_API_BASE = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}"
+
+API_TIMEOUT_SECONDS = 30
+LONG_POLL_MARGIN_SECONDS = 10
+TOPIC_DISCOVERY_TIMEOUT_SECONDS = 15
+TOPIC_DISCOVERY_LIMIT = 100
+
 PEOPLE_TOPIC_CACHE_KEY = "telegram_people_topic_id"
-TOPIC_MAP_CACHE_KEY = "telegram_forum_topic_map"
+PEOPLE_TOPIC_CACHE_TTL_SECONDS = 60 * 60
+
+# Welche Update-Typen wir überhaupt zugestellt bekommen wollen. Als Konstante,
+# weil Webhook-Registrierung und getUpdates dieselbe Liste brauchen, weichen
+# sie ab, verhält sich Polling anders als Produktion.
+ALLOWED_UPDATE_TYPES = ("chat_member", "message", "channel_post", "my_chat_member")
 
 
-def _api_post(method: str, data: dict | None = None, files: dict | None = None) -> dict:
-    response = requests.post(
-        f"{TELEGRAM_API_BASE}/{method}",
-        data=data or {},
-        files=files,
-        timeout=30,
-    )
-    payload = response.json() if response.content else {}
-    if not response.ok or not payload.get("ok"):
-        description = payload.get("description") or response.text
-        raise RuntimeError(
-            f"Telegram {method} fehlgeschlagen "
-            f"(HTTP {response.status_code}): {description}"
+def _api_call(
+    method: str,
+    *,
+    data: dict | None = None,
+    files: dict | None = None,
+    timeout: int = API_TIMEOUT_SECONDS,
+) -> Any:
+    """
+    Einzige Ein- und Ausgangstür zur Bot-API.
+
+    Telegram akzeptiert für alle Methoden POST, deshalb gibt es hier keinen
+    zweiten Codepfad für GET.
+
+    Raises:
+        TelegramTransportError: Netzwerkfehler oder unlesbare Antwort.
+        TelegramAPIError: Telegram hat mit ok: false geantwortet.
+    """
+    try:
+        response = requests.post(
+            f"{TELEGRAM_API_BASE}/{method}",
+            data=data or {},
+            files=files,
+            timeout=timeout,
         )
+    except requests.RequestException as exc:
+        # Bewusst kein 'from exc' und kein str(exc): beide enthalten die URL
+        # und damit den Bot-Token. Diese Exception wird geloggt.
+        raise TelegramTransportError(
+            f"Telegram {method}: {type(exc).__name__}"
+        ) from None
+
+    try:
+        payload = response.json() if response.content else {}
+    except ValueError:
+        raise TelegramTransportError(
+            f"Telegram {method}: Antwort ist kein JSON (HTTP {response.status_code})"
+        ) from None
+
+    if not response.ok or not payload.get("ok"):
+        raise TelegramAPIError(method, response.status_code, payload)
     return payload["result"]
 
 
 def create_single_use_invite_link(name: str) -> str:
-    result = _api_post(
+    result = _api_call(
         "createChatInviteLink",
         data={
             "chat_id": settings.TELEGRAM_CHAT_ID,
@@ -52,115 +109,61 @@ def create_single_use_invite_link(name: str) -> str:
 
 
 def get_updates(offset: int | None = None, timeout: int = 30) -> list[dict]:
-    params: dict[str, Any] = {
+    data: dict[str, Any] = {
         "timeout": timeout,
-        "allowed_updates": json.dumps(
-            ["chat_member", "message", "channel_post", "my_chat_member"]
-        ),
+        "allowed_updates": json.dumps(list(ALLOWED_UPDATE_TYPES)),
     }
     if offset is not None:
-        params["offset"] = offset
+        data["offset"] = offset
 
-    response = requests.get(
-        f"{TELEGRAM_API_BASE}/getUpdates", params=params, timeout=timeout + 10
+    return _api_call(
+        "getUpdates", data=data, timeout=timeout + LONG_POLL_MARGIN_SECONDS
     )
-    response.raise_for_status()
-    data = response.json()
-    if not data.get("ok"):
-        raise RuntimeError(f"Telegram API Fehler: {data}")
-    return data["result"]
 
 
-def remember_forum_topic(name: str, thread_id: int) -> None:
-    topic_map = cache.get(TOPIC_MAP_CACHE_KEY) or {}
-    topic_map[name] = thread_id
-    cache.set(TOPIC_MAP_CACHE_KEY, topic_map, timeout=None)
-
-    expected = getattr(settings, "TELEGRAM_PEOPLE_TOPIC_NAME", "Наши люди")
-    if name.strip().lower() == expected.strip().lower():
-        cache.set(PEOPLE_TOPIC_CACHE_KEY, thread_id, timeout=None)
-        logger.info("Telegram people topic resolved dynamically: %s", thread_id)
+# Ausstehende Updates nie verwerfen: Darunter sind echte Gruppenbeitritte.
+# Ein verworfenes chat_member-Update heißt, dass jemand in der Gruppe steht,
+# dessen Invite nie als genutzt markiert wird – und der damit keine
+# Profilkarte bekommt. Deshalb keine Option, sondern eine Festlegung.
+KEEP_PENDING_UPDATES = "false"
 
 
-def process_forum_topic_message(message: dict) -> None:
-    """Discover forum topic IDs from service messages."""
-    created = message.get("forum_topic_created")
-    edited = message.get("forum_topic_edited")
-    thread_id = message.get("message_thread_id")
-    if not thread_id:
-        return
-
-    if created and created.get("name"):
-        remember_forum_topic(created["name"], thread_id)
-    elif edited and edited.get("name"):
-        remember_forum_topic(edited["name"], thread_id)
-
-
-def parse_people_topic_id(raw: str | int | None) -> int | None:
+def set_webhook(url: str) -> None:
     """
-    Akzeptiert reine Thread-IDs ('3') und t.me/c-Formate ('4378956431/3').
+    Registriert den Webhook bei Telegram.
     """
-    if raw is None:
-        return None
-    value = str(raw).strip()
-    if not value:
-        return None
-    if "/" in value:
-        value = value.rsplit("/", 1)[-1]
-    try:
-        return int(value)
-    except ValueError:
-        logger.warning("Ungültige TELEGRAM_PEOPLE_TOPIC_ID: %r", raw)
-        return None
-
-
-def resolve_people_topic_id() -> int | None:
-    cached = cache.get(PEOPLE_TOPIC_CACHE_KEY)
-    if cached is not None:
-        return int(cached)
-
-    configured = getattr(settings, "TELEGRAM_PEOPLE_TOPIC_ID", "") or ""
-    topic_id = parse_people_topic_id(configured)
-    if topic_id is not None:
-        cache.set(PEOPLE_TOPIC_CACHE_KEY, topic_id, timeout=None)
-        return topic_id
-
-    expected = getattr(settings, "TELEGRAM_PEOPLE_TOPIC_NAME", "Наши люди")
-    topic_map = cache.get(TOPIC_MAP_CACHE_KEY) or {}
-    for name, thread_id in topic_map.items():
-        if str(name).strip().lower() == expected.strip().lower():
-            cache.set(PEOPLE_TOPIC_CACHE_KEY, int(thread_id), timeout=None)
-            return int(thread_id)
-
-    # Best-effort: some Telegram endpoints expose forum topics unofficially.
-    try:
-        response = requests.get(
-            f"{TELEGRAM_API_BASE}/getForumTopics",
-            params={"chat_id": settings.TELEGRAM_CHAT_ID, "limit": 100},
-            timeout=15,
+    secret = getattr(settings, "TELEGRAM_WEBHOOK_SECRET", "") or ""
+    if not secret:
+        raise TelegramConfigurationError(
+            "TELEGRAM_WEBHOOK_SECRET ist leer – der Endpunkt würde jede "
+            "Anfrage ablehnen, die Registrierung wäre wirkungslos."
         )
-        payload = response.json() if response.content else {}
-        if payload.get("ok"):
-            topics = payload.get("result", {}).get("topics") or payload.get(
-                "result", []
-            )
-            for topic in topics:
-                name = topic.get("name") or ""
-                thread_id = topic.get("message_thread_id") or topic.get("message_id")
-                if not thread_id:
-                    continue
-                remember_forum_topic(name, int(thread_id))
-                if name.strip().lower() == expected.strip().lower():
-                    return int(thread_id)
-    except Exception:
-        logger.debug("getForumTopics unavailable; waiting for dynamic discovery")
 
-    return None
+    _api_call(
+        "setWebhook",
+        data={
+            "url": url,
+            "secret_token": secret,
+            "allowed_updates": json.dumps(list(ALLOWED_UPDATE_TYPES)),
+            "drop_pending_updates": KEEP_PENDING_UPDATES,
+        },
+    )
+
+
+def delete_webhook() -> None:
+    """Entfernt die Webhook-Registrierung."""
+    _api_call("deleteWebhook", data={"drop_pending_updates": KEEP_PENDING_UPDATES})
+
+
+def get_webhook_info() -> dict:
+    result = _api_call("getWebhookInfo")
+    return result if isinstance(result, dict) else {}
 
 
 def send_private_message(telegram_user_id: int, text: str) -> bool:
+    """Best effort – eine nicht zustellbare DM darf nichts blockieren."""
     try:
-        _api_post(
+        _api_call(
             "sendMessage",
             data={
                 "chat_id": telegram_user_id,
@@ -170,35 +173,35 @@ def send_private_message(telegram_user_id: int, text: str) -> bool:
             },
         )
         return True
-    except Exception as exc:
+    except (TelegramAPIError, TelegramTransportError) as exc:
         logger.info("Telegram DM an %s fehlgeschlagen: %s", telegram_user_id, exc)
         return False
 
 
 def revoke_invite_link(invite_link: str) -> None:
     try:
-        _api_post(
+        _api_call(
             "revokeChatInviteLink",
             data={
                 "chat_id": settings.TELEGRAM_CHAT_ID,
                 "invite_link": invite_link,
             },
         )
-    except Exception as exc:
+    except (TelegramAPIError, TelegramTransportError) as exc:
         logger.warning("revokeChatInviteLink fehlgeschlagen: %s", exc)
 
 
 def kick_chat_member(telegram_user_id: int) -> None:
     """Entfernt den User aus der Gruppe, ohne dauerhaften Ban."""
     try:
-        _api_post(
+        _api_call(
             "banChatMember",
             data={
                 "chat_id": settings.TELEGRAM_CHAT_ID,
                 "user_id": telegram_user_id,
             },
         )
-        _api_post(
+        _api_call(
             "unbanChatMember",
             data={
                 "chat_id": settings.TELEGRAM_CHAT_ID,
@@ -206,7 +209,7 @@ def kick_chat_member(telegram_user_id: int) -> None:
                 "only_if_banned": True,
             },
         )
-    except Exception as exc:
+    except (TelegramAPIError, TelegramTransportError) as exc:
         logger.warning(
             "Kick von telegram_user_id=%s fehlgeschlagen: %s",
             telegram_user_id,
@@ -222,77 +225,290 @@ def find_invite_by_telegram_user_id(telegram_user_id: int) -> TelegramInvite | N
     )
 
 
-def post_or_update_profile_card(profile, invite: TelegramInvite) -> TelegramInvite:
+def _people_topic_name() -> str:
+    return str(
+        getattr(settings, "TELEGRAM_PEOPLE_TOPIC_NAME", "Наши люди") or ""
+    ).strip()
+
+
+def remember_forum_topic(name: str, thread_id: int) -> None:
+    """
+    Persistiert eine entdeckte Topic-Zuordnung.
+    """
+    name = (name or "").strip()
+    if not name:
+        return
+
+    TelegramForumTopic.objects.update_or_create(
+        name=name, defaults={"thread_id": int(thread_id)}
+    )
+
+    if name.lower() == _people_topic_name().lower():
+        cache.set(
+            PEOPLE_TOPIC_CACHE_KEY, int(thread_id), PEOPLE_TOPIC_CACHE_TTL_SECONDS
+        )
+        logger.info("Telegram people topic aufgelöst: %s", thread_id)
+
+
+def process_forum_topic_message(message: dict) -> None:
+    """
+    Topic-IDs aus Service-Nachrichten der Gruppe.
+    """
+    created = message.get("forum_topic_created")
+    edited = message.get("forum_topic_edited")
+    thread_id = message.get("message_thread_id")
+    if not thread_id:
+        return
+
+    if created and created.get("name"):
+        remember_forum_topic(created["name"], thread_id)
+    elif edited and edited.get("name"):
+        remember_forum_topic(edited["name"], thread_id)
+
+
+def parse_people_topic_id(raw: str | int | None) -> int | None:
+    """Akzeptiert reine Thread-IDs ('3') und t.me/c-Formate ('4378956431/3')."""
+    if raw is None:
+        return None
+    value = str(raw).strip()
+    if not value:
+        return None
+    if "/" in value:
+        value = value.rsplit("/", 1)[-1]
+    try:
+        return int(value)
+    except ValueError:
+        logger.warning("Ungültige TELEGRAM_PEOPLE_TOPIC_ID: %r", raw)
+        return None
+
+
+def resolve_people_topic_id() -> int | None:
+    """Ermittelt die Thread-ID des Topics «Наши люди».
+
+    Reihenfolge: Cache → Konfiguration → DB → einmalige Abfrage bei Telegram.
+    """
+    cached = cache.get(PEOPLE_TOPIC_CACHE_KEY)
+    if cached is not None:
+        return int(cached)
+
+    configured = parse_people_topic_id(
+        getattr(settings, "TELEGRAM_PEOPLE_TOPIC_ID", "") or ""
+    )
+    if configured is not None:
+        cache.set(PEOPLE_TOPIC_CACHE_KEY, configured, PEOPLE_TOPIC_CACHE_TTL_SECONDS)
+        return configured
+
+    expected = _people_topic_name()
+    stored = TelegramForumTopic.objects.filter(name__iexact=expected).first()
+    if stored is not None:
+        cache.set(
+            PEOPLE_TOPIC_CACHE_KEY, stored.thread_id, PEOPLE_TOPIC_CACHE_TTL_SECONDS
+        )
+        return stored.thread_id
+
+    return _discover_people_topic_id(expected)
+
+
+def _discover_people_topic_id(expected: str) -> int | None:
+    """Fragt die Topic-Liste ab. Der Endpoint ist nicht überall verfügbar."""
+    try:
+        topics = _api_call(
+            "getForumTopics",
+            data={
+                "chat_id": settings.TELEGRAM_CHAT_ID,
+                "limit": TOPIC_DISCOVERY_LIMIT,
+            },
+            timeout=TOPIC_DISCOVERY_TIMEOUT_SECONDS,
+        )
+    except (TelegramAPIError, TelegramTransportError) as exc:
+        logger.info(
+            "getForumTopics nicht verfügbar (%s) – warte auf dynamische "
+            "Entdeckung über Service-Nachrichten",
+            exc,
+        )
+        return None
+
+    if isinstance(topics, dict):
+        topics = topics.get("topics") or []
+
+    found: int | None = None
+    for topic in topics:
+        name = topic.get("name") or ""
+        thread_id = topic.get("message_thread_id") or topic.get("message_id")
+        if not thread_id:
+            continue
+        remember_forum_topic(name, int(thread_id))
+        if name.strip().lower() == expected.lower():
+            found = int(thread_id)
+    return found
+
+
+@dataclass(frozen=True)
+class ProfileCardPayload:
+    """Alles, was einen Profilpost inhaltlich ausmacht."""
+
+    caption: str
+    reply_markup: str
+    photo_bytes: bytes
+    filename: str
+
+    @property
+    def digest(self) -> str:
+        """
+        Fingerabdruck des Postinhalts.
+
+        Stimmt er mit dem gespeicherten überein, entfällt der Telegram-Call –
+        die billigste Antwort ist die, die man gar nicht erst erfragt.
+        """
+        checksum = hashlib.sha256()
+        checksum.update(self.caption.encode())
+        checksum.update(self.reply_markup.encode())
+        checksum.update(self.photo_bytes)
+        return checksum.hexdigest()
+
+
+def build_profile_card_payload(profile: MemberProfile) -> ProfileCardPayload:
+    photo_bytes, filename = resolve_avatar_bytes(profile)
+    return ProfileCardPayload(
+        caption=build_profile_caption(profile),
+        reply_markup=json.dumps(build_profile_keyboard(profile), ensure_ascii=False),
+        photo_bytes=photo_bytes,
+        filename=filename,
+    )
+
+
+def post_or_update_profile_card(
+    profile: MemberProfile, invite: TelegramInvite
+) -> TelegramInvite:
+    """
+    Postet die Profilkarte oder aktualisiert den bestehenden Post.
+    """
     topic_id = resolve_people_topic_id()
     if topic_id is None:
-        raise RuntimeError(
+        raise TelegramConfigurationError(
             "Telegram topic «Наши люди» nicht gefunden. "
             "TELEGRAM_PEOPLE_TOPIC_ID setzen oder Topic-Namen beobachten."
         )
 
-    caption = build_profile_caption(profile)
-    reply_markup = json.dumps(
-        build_profile_keyboard(profile), ensure_ascii=False
-    )
-    photo_bytes, filename = resolve_avatar_bytes(profile)
-    chat_id = settings.TELEGRAM_CHAT_ID
+    payload = build_profile_card_payload(profile)
 
     if invite.profile_message_id:
-        try:
-            media = json.dumps(
-                {
-                    "type": "photo",
-                    "media": "attach://photo",
-                    "caption": caption,
-                    "parse_mode": "HTML",
-                },
-                ensure_ascii=False,
-            )
-            result = _api_post(
-                "editMessageMedia",
-                data={
-                    "chat_id": invite.profile_chat_id or chat_id,
-                    "message_id": invite.profile_message_id,
-                    "media": media,
-                    "reply_markup": reply_markup,
-                },
-                files={"photo": (filename, photo_bytes)},
-            )
-            photos = result.get("photo") or []
-            if photos:
-                invite.profile_photo_file_id = photos[-1].get("file_id", "")
-            invite.profile_synced_at = timezone.now()
-            invite.save(
-                update_fields=[
-                    "profile_photo_file_id",
-                    "profile_synced_at",
-                ]
-            )
-            return invite
-        except Exception as exc:
-            logger.warning(
-                "editMessageMedia failed for user %s (%s); sending new post",
+        if invite.profile_content_hash == payload.digest:
+            logger.debug(
+                "Profilpost user=%s unverändert – kein Telegram-Call",
                 invite.user_id,
-                exc,
             )
+            return _touch_synced_at(invite)
 
-    result = _api_post(
-        "sendPhoto",
-        data={
-            "chat_id": chat_id,
-            "caption": caption,
+        try:
+            result = _edit_profile_card(invite, payload)
+        except TelegramAPIError as exc:
+            if exc.is_not_modified:
+                logger.info("Profilpost user=%s war bereits aktuell", invite.user_id)
+                return _touch_synced_at(invite, digest=payload.digest)
+            if not exc.is_message_gone:
+                raise
+            logger.warning(
+                "Profilpost user=%s nicht mehr editierbar (%s) – wird neu gesendet",
+                invite.user_id,
+                exc.description,
+            )
+        else:
+            # DB-Schreibzugriff bewusst außerhalb des try: Ein Fehler hier darf
+            # nicht als Telegram-Fehler behandelt werden und einen zweiten Post
+            # auslösen, obwohl der Edit erfolgreich war.
+            return _save_edit_result(invite, result, payload.digest)
+
+    return _send_new_profile_card(invite, payload, topic_id)
+
+
+def _edit_profile_card(invite: TelegramInvite, payload: ProfileCardPayload) -> Any:
+    media = json.dumps(
+        {
+            "type": "photo",
+            "media": "attach://photo",
+            "caption": payload.caption,
             "parse_mode": "HTML",
-            "message_thread_id": topic_id,
-            "reply_markup": reply_markup,
         },
-        files={"photo": (filename, photo_bytes)},
+        ensure_ascii=False,
+    )
+    return _api_call(
+        "editMessageMedia",
+        data={
+            "chat_id": invite.profile_chat_id or settings.TELEGRAM_CHAT_ID,
+            "message_id": invite.profile_message_id,
+            "media": media,
+            "reply_markup": payload.reply_markup,
+        },
+        files={"photo": (payload.filename, payload.photo_bytes)},
     )
 
+
+def _send_new_profile_card(
+    invite: TelegramInvite, payload: ProfileCardPayload, topic_id: int
+) -> TelegramInvite:
+    result = _api_call(
+        "sendPhoto",
+        data={
+            "chat_id": settings.TELEGRAM_CHAT_ID,
+            "caption": payload.caption,
+            "parse_mode": "HTML",
+            "message_thread_id": topic_id,
+            "reply_markup": payload.reply_markup,
+        },
+        files={"photo": (payload.filename, payload.photo_bytes)},
+    )
+    return _save_send_result(invite, result, topic_id, payload.digest)
+
+
+def _largest_photo_file_id(result: Any) -> str:
+    """``editMessageMedia`` liefert bei Inline-Nachrichten ``True`` statt Message."""
+    if not isinstance(result, dict):
+        return ""
     photos = result.get("photo") or []
+    return photos[-1].get("file_id", "") if photos else ""
+
+
+def _touch_synced_at(
+    invite: TelegramInvite, digest: str | None = None
+) -> TelegramInvite:
+    invite.profile_synced_at = timezone.now()
+    fields = ["profile_synced_at"]
+    if digest is not None:
+        invite.profile_content_hash = digest
+        fields.append("profile_content_hash")
+    invite.save(update_fields=fields)
+    return invite
+
+
+def _save_edit_result(
+    invite: TelegramInvite, result: Any, digest: str
+) -> TelegramInvite:
+    file_id = _largest_photo_file_id(result)
+    if file_id:
+        invite.profile_photo_file_id = file_id
+    invite.profile_content_hash = digest
+    invite.profile_synced_at = timezone.now()
+    invite.save(
+        update_fields=[
+            "profile_photo_file_id",
+            "profile_content_hash",
+            "profile_synced_at",
+        ]
+    )
+    return invite
+
+
+def _save_send_result(
+    invite: TelegramInvite, result: Any, topic_id: int, digest: str
+) -> TelegramInvite:
     invite.profile_message_id = result.get("message_id")
-    invite.profile_chat_id = str(result.get("chat", {}).get("id") or chat_id)
+    invite.profile_chat_id = str(
+        result.get("chat", {}).get("id") or settings.TELEGRAM_CHAT_ID
+    )
     invite.profile_thread_id = topic_id
-    invite.profile_photo_file_id = photos[-1].get("file_id", "") if photos else ""
+    invite.profile_photo_file_id = _largest_photo_file_id(result)
+    invite.profile_content_hash = digest
     invite.profile_posted_at = timezone.now()
     invite.profile_synced_at = invite.profile_posted_at
     invite.save(
@@ -301,11 +517,42 @@ def post_or_update_profile_card(profile, invite: TelegramInvite) -> TelegramInvi
             "profile_chat_id",
             "profile_thread_id",
             "profile_photo_file_id",
+            "profile_content_hash",
             "profile_posted_at",
             "profile_synced_at",
         ]
     )
     return invite
+
+
+def delete_profile_card(invite: TelegramInvite) -> bool:
+    """
+    Entfernt den Profilpost aus dem Kanal.
+    """
+    if not invite.profile_message_id:
+        return True
+
+    try:
+        _api_call(
+            "deleteMessage",
+            data={
+                "chat_id": invite.profile_chat_id or settings.TELEGRAM_CHAT_ID,
+                "message_id": invite.profile_message_id,
+            },
+        )
+    except (TelegramAPIError, TelegramTransportError) as exc:
+        logger.error(
+            "Profilpost user=%s konnte NICHT gelöscht werden (%s) – manuelles "
+            "Entfernen aus «Наши люди» nötig",
+            invite.user_id,
+            exc,
+        )
+        return False
+
+    invite.profile_message_id = None
+    invite.profile_content_hash = ""
+    invite.save(update_fields=["profile_message_id", "profile_content_hash"])
+    return True
 
 
 def process_chat_member_update(chat_member_update: dict) -> bool:
@@ -337,27 +584,8 @@ def process_chat_member_update(chat_member_update: dict) -> bool:
     except TelegramInvite.DoesNotExist:
         return False
 
-    if telegram_user_id:
-        existing = find_invite_by_telegram_user_id(int(telegram_user_id))
-        if existing and existing.pk != invite.pk:
-            logger.warning(
-                "Telegram-User %s bereits an Account %s gebunden; "
-                "Beitritt für Invite user=%s abgelehnt",
-                telegram_user_id,
-                existing.user_id,
-                invite.user_id,
-            )
-            if invite.invite_link:
-                revoke_invite_link(invite.invite_link)
-            kick_chat_member(int(telegram_user_id))
-            send_private_message(
-                int(telegram_user_id),
-                (
-                    "Этот Telegram-аккаунт уже привязан к другому профилю клуба. "
-                    "Повторная регистрация с тем же Telegram не допускается."
-                ),
-            )
-            return False
+    if telegram_user_id and _reject_duplicate_account(invite, int(telegram_user_id)):
+        return False
 
     invite.used = True
     invite.used_at = timezone.now()
@@ -377,18 +605,48 @@ def process_chat_member_update(chat_member_update: dict) -> bool:
             kick_chat_member(int(telegram_user_id))
         return False
 
-    # --- Lazy import avoids circular imports with Celery tasks.
-    from apps.bot.tasks.profile_post import (
-        send_profile_completion_reminder,
-        sync_telegram_profile_post,
-    )
+    _schedule_post_join_tasks(invite.user_id)
+    return True
 
-    sync_telegram_profile_post.delay(invite.user_id)
-    send_profile_completion_reminder.delay(invite.user_id)
-    send_profile_completion_reminder.apply_async(
-        args=[invite.user_id], countdown=60 * 60 * 24
+
+def _reject_duplicate_account(invite: TelegramInvite, telegram_user_id: int) -> bool:
+    """
+    Prüft, ob dieser Telegram-Account schon an einen anderen Club-Account geht.
+    """
+    existing = find_invite_by_telegram_user_id(telegram_user_id)
+    if not existing or existing.pk == invite.pk:
+        return False
+
+    logger.warning(
+        "Telegram-User %s bereits an Account %s gebunden; "
+        "Beitritt für Invite user=%s abgelehnt",
+        telegram_user_id,
+        existing.user_id,
+        invite.user_id,
+    )
+    if invite.invite_link:
+        revoke_invite_link(invite.invite_link)
+    kick_chat_member(telegram_user_id)
+    send_private_message(
+        telegram_user_id,
+        (
+            "Этот Telegram-аккаунт уже привязан к другому профилю клуба. "
+            "Повторная регистрация с тем же Telegram не допускается."
+        ),
     )
     return True
+
+
+def _schedule_post_join_tasks(user_id: int) -> None:
+    """
+    Stößt an, was nach einem Gruppenbeitritt folgt.
+
+    Kein Profil-Reminder mehr: Wer beitreten kann, hat eine Einladung, und die
+    gibt es nur mit vollständigem Profil.
+    """
+    from apps.bot.tasks.profile_post import sync_telegram_profile_post
+
+    sync_telegram_profile_post.delay(user_id)
 
 
 def process_telegram_update(update: dict) -> None:

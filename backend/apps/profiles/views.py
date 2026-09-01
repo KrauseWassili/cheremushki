@@ -14,6 +14,8 @@ from .serializers import (
     AvatarUploadSerializer,
     ContactRequestCreateSerializer,
     MemberProfileSerializer,
+    MyProfileSerializer,
+    trigger_profile_side_effects,
 )
 from .tasks import send_contact_request_email
 
@@ -32,9 +34,11 @@ async def aget_or_create_profile(user) -> MemberProfile:
 
 
 class ProfileMeViewSet(viewsets.GenericViewSet):
-    """Eigenes Community-Profil – analog zu accounts.UserMeViewSet."""
+    """
+    Eigenes Community-Profil – analog zu accounts.UserMeViewSet.
+    """
 
-    serializer_class = MemberProfileSerializer
+    serializer_class = MyProfileSerializer
     permission_classes = [IsActiveAuthenticated]
     queryset = MemberProfile.objects.none()
 
@@ -58,8 +62,6 @@ class ProfileMeViewSet(viewsets.GenericViewSet):
         parser_classes=[MultiPartParser, FormParser],
     )
     async def upload_avatar(self, request):
-        from apps.bot.tasks.profile_post import sync_telegram_profile_post
-
         profile = await aget_or_create_profile(request.user)
         serializer = AvatarUploadSerializer(data=request.data)
         await sync_to_async(serializer.is_valid)(raise_exception=True)
@@ -80,13 +82,18 @@ class ProfileMeViewSet(viewsets.GenericViewSet):
                 "avatar_crop_size", profile.avatar_crop_size
             )
             profile.save()
-            profile.refresh_directory_visibility(save=True)
-            return profile
+            became_ready = profile.refresh_directory_visibility(save=True)
+            return profile, became_ready
 
-        profile = await sync_to_async(_save_avatar)()
+        profile, became_ready = await sync_to_async(_save_avatar)()
 
-        await sync_to_async(sync_telegram_profile_post.delay)(profile.user_id)
-        out = MemberProfileSerializer(profile, context={"request": request})
+        # Der Avatar ist Pflichtfeld: Ein Upload kann das Profil vollständig
+        # machen und damit die Einladung auslösen.
+        await trigger_profile_side_effects(profile, became_ready)
+        # Derselbe Serializer wie in me: Das Frontend liest nach dem Upload
+        # directory_ready und missing_fields aus der Antwort und muss die
+        # Vollständigkeit nicht selbst nachrechnen.
+        out = MyProfileSerializer(profile, context={"request": request})
         return Response(await get_data(out), status=status.HTTP_200_OK)
 
 

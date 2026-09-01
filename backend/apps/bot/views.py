@@ -11,7 +11,9 @@ from .serializers import TelegramWebhookSerializer
 class TelegramWebhookViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
     serializer_class = TelegramWebhookSerializer
     permission_classes = [IsTelegramWebhook]
-    queryset = TelegramInvite.objects.none()  # GenericViewSet requires a `queryset` attribute
+    queryset = (
+        TelegramInvite.objects.none()
+    )  # GenericViewSet requires a `queryset` attribute
 
     async def acreate(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)

@@ -90,7 +90,5 @@ class Command(BaseCommand):
         else:
             sync_telegram_profile_post.delay(user.pk)
             self.stdout.write(
-                self.style.SUCCESS(
-                    f"Sync-Task für user={user.pk} in die Queue gelegt."
-                )
+                self.style.SUCCESS(f"Sync-Task für user={user.pk} in die Queue gelegt.")
             )
