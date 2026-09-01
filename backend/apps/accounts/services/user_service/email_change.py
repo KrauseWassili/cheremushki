@@ -26,7 +26,7 @@ def confirm_email_change(uid_b64: str, token: str) -> CustomUser:
     with transaction.atomic():
         try:
             user = CustomUser.objects.select_for_update().get(pk=uid)
-        except CustomUser.DoesNotExist as exc:
+        except (CustomUser.DoesNotExist, ValueError, TypeError) as exc:
             raise EmailChangeError("invalid_link") from exc
         if not user.pending_email:
             raise EmailChangeError("nothing_pending")
@@ -40,11 +40,15 @@ def confirm_email_change(uid_b64: str, token: str) -> CustomUser:
     return user
 
 
-def _decode_uid(uid_b64: str) -> str:
+def _decode_uid(uid_b64: str) -> int:
     try:
-        return force_str(urlsafe_base64_decode(uid_b64))
-    except (ValueError, TypeError, OverflowError) as exc:
+        raw = force_str(urlsafe_base64_decode(uid_b64 or ""))
+        pk = int(raw)
+    except (ValueError, TypeError, OverflowError, UnicodeDecodeError) as exc:
         raise EmailChangeError("invalid_link") from exc
+    if pk <= 0:
+        raise EmailChangeError("invalid_link")
+    return pk
 
 
 def _is_email_taken(email: str, *, exclude_pk: int) -> bool:
