@@ -176,6 +176,33 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
         return attrs
 
 
+class EmailChangeSerializer(serializers.Serializer):
+    current_password = serializers.CharField(write_only=True)
+    new_email = serializers.EmailField()
+
+    def validate_new_email(self, value):
+        email = value.lower().strip()
+        user = self.context["request"].user
+
+        if email == user.email.lower():
+            raise ValidationError("Новая почта совпадает с текущей.")
+
+        if CustomUser.objects.filter(email__iexact=email).exists():
+            raise ValidationError("Эта почта уже зарегистрирована.")
+        return email
+
+    def validate(self, attrs):
+        user = self.context["request"].user
+        if not user.check_password(attrs["current_password"]):
+            raise ValidationError({"current_password": "Текущий пароль неверен."})
+        return attrs
+
+
+class EmailChangeConfirmSerializer(serializers.Serializer):
+    uid = serializers.CharField()
+    token = serializers.CharField()
+
+
 class AccountDeleteSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True)
 

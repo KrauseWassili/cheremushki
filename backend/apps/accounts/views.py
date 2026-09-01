@@ -41,8 +41,15 @@ from .serializers import (
     PasswordResetRequestSerializer,
     RegisterSerializer,
     UserSerializer,
+    EmailChangeConfirmSerializer,
+    EmailChangeSerializer,
 )
-from .tasks import send_activation_email
+from .services.user_service.email_change import (
+    EmailChangeError,
+    confirm_email_change,
+    request_email_change,
+)
+from .tasks import send_activation_email, send_email_change_confirmation
 
 
 class LoginViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
@@ -452,3 +459,63 @@ class AccountDeleteViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
         await sync_to_async(purge_telegram_presence.delay)(user_id)
 
         return Response({"detail": "Аккаунт удалён."}, status=status.HTTP_200_OK)
+
+
+_EMAIL_CHANGE_ERRORS = {
+    "invalid_link": "Некорректная ссылка подтверждения.",
+    "nothing_pending": "Нет ожидаемой смены почты.",
+    "invalid_token": "Ссылка недействительна или устарела.",
+    "taken": "Эта почта уже занята.",
+}
+
+
+class EmailViewSet(viewsets.GenericViewSet):
+    queryset = CustomUser.objects.none()
+
+    def get_permissions(self):
+        if self.action == "change":
+            return [IsAuthenticated()]
+        return [AllowAny()]
+
+    def get_throttles(self):
+        self.throttle_scope = "account" if self.action == "change" else "activate"
+        return [ScopedRateThrottle()]
+
+    def get_serializer_class(self):
+        if self.action == "confirm":
+            return EmailChangeConfirmSerializer
+        return EmailChangeSerializer
+
+    @action(detail=False, methods=["post"], url_path="change")
+    async def change(self, request):
+        serializer = self.get_serializer(
+            data=request.data, context={"request": request}
+        )
+        await sync_to_async(serializer.is_valid)(raise_exception=True)
+        await sync_to_async(request_email_change)(
+            request.user, serializer.validated_data["new_email"]
+        )
+        await sync_to_async(send_email_change_confirmation.delay)(request.user.pk)
+        return Response(
+            {"detail": "Письмо со ссылкой отправлено на новый адрес."},
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=False, methods=["post"], url_path="confirm")
+    async def confirm(self, request):
+        serializer = self.get_serializer(data=request.data)
+        await sync_to_async(serializer.is_valid)(raise_exception=True)
+        try:
+            await sync_to_async(confirm_email_change)(
+                serializer.validated_data["uid"],
+                serializer.validated_data["token"],
+            )
+        except EmailChangeError as exc:
+            return Response(
+                {"detail": _EMAIL_CHANGE_ERRORS[exc.code]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(
+            {"detail": "Почта изменена. Дальше входи с новым адресом."},
+            status=status.HTTP_200_OK,
+        )
