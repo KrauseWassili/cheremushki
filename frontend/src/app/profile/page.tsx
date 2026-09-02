@@ -11,6 +11,7 @@ import {
 import Link from "next/link";
 import { useApp } from "@/providers/AppProvider";
 import { AvatarUpload } from "@/components/members/avatar-upload";
+import { TagPicker } from "@/components/members/tag-picker";
 import { CustomSelect } from "@/components/ui/custom-select";
 import { buttonClassName } from "@/components/ui/button";
 import { fieldClassName } from "@/components/ui/text-field";
@@ -613,18 +614,12 @@ export default function ProfilePage() {
             />
           </label>
 
-          <label className="grid gap-2 min-[900px]:col-span-2">
-            <span className="font-bold">Ключевые слова</span>
-            <input
+          <div className="min-[900px]:col-span-2">
+            <TagPicker
               value={draft.tags}
-              onChange={(event) => updateField("tags", event.target.value)}
-              placeholder="Через запятую: дизайн, Python, карьера"
-              className={getEditableFieldClassName()}
+              onChange={(tags) => updateField("tags", tags)}
             />
-            <span className="text-xs leading-5 text-muted-foreground">
-              Данные слова помогут найти вас в каталоге и Telegram-группе.
-            </span>
-          </label>
+          </div>
         </div>
       </section>
 

@@ -82,7 +82,7 @@ export function MemberCard({ member }: MemberCardProps) {
 
           {member.tags.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-2">
-              {member.tags.slice(0, 5).map((tag) => (
+              {member.tags.slice(0, 10).map((tag) => (
                 <span
                   key={tag}
                   className="rounded-full border border-border bg-surface-muted/70 px-3 py-1 text-xs font-medium text-muted-foreground"
