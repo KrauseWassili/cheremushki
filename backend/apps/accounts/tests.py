@@ -28,7 +28,12 @@ from apps.bot.models import TelegramInvite
 from apps.bot.services.telegram import find_invite_by_telegram_user_id
 from apps.bot.tasks.account import purge_telegram_presence
 from apps.bot.tasks.email import send_telegram_invite_email
-from apps.profiles.models import ContactMode, ContactRequest, MemberProfile
+from apps.profiles.models import (
+    ContactMode,
+    ContactRequest,
+    MemberProfile,
+    ProfileTag,
+)
 
 LOCMEM_CACHE = {
     "default": {
@@ -377,7 +382,6 @@ class AccountDeletionTests(TestCase):
             bio="Kurz über mich",
             can_help_with="Design-Reviews",
             looking_for="Sparring",
-            tags=["design", "ux"],
             languages=["ru", "de"],
             achievements=["Preis"],
             telegram_username="anna",
@@ -390,6 +394,17 @@ class AccountDeletionTests(TestCase):
         self.profile.avatar.save("user-x.png", _one_pixel_png(), save=False)
         self.profile.ensure_unique_slug()
         self.profile.save()
+        # Tags hängen am Manager und brauchen eine gespeicherte Instanz.
+        # update_or_create, weil das Startvokabular per Datenmigration schon in
+        # der Test-DB liegt und "дизайн" dort vorkommt.
+        self.profile.tags.set(
+            [
+                ProfileTag.objects.update_or_create(
+                    name=name, defaults={"label": label}
+                )[0]
+                for name, label in (("дизайн", "Дизайн"), ("ux", "UX"))
+            ]
+        )
 
         self.client = APIClient()
         self.client.force_authenticate(self.user)
@@ -441,7 +456,7 @@ class AccountDeletionTests(TestCase):
             with self.subTest(field=field):
                 self.assertEqual(getattr(self.profile, field), "")
 
-        self.assertEqual(self.profile.tags, [])
+        self.assertEqual(list(self.profile.tags.names()), [])
         self.assertEqual(self.profile.languages, [])
         self.assertEqual(self.profile.achievements, [])
         self.assertEqual(self.profile.contact_mode, ContactMode.CLOSED)

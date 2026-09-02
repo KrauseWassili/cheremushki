@@ -561,13 +561,13 @@ class ProfileCaptionHeadlineTests(SimpleTestCase):
     def test_headline_only_without_profession_is_the_subtitle(self):
         profile = make_profile(headline="ЗАГОЛОВОК", profession="")
         caption = build_profile_caption(profile)
-        self.assertEqual(self.italic_line(caption), "<i>ЗАГОЛОВОК · Berlin</i>")
+        self.assertEqual(self.italic_line(caption), "<i>ЗАГОЛОВОК · #berlin</i>")
 
     def test_profession_does_not_replace_headline_in_subtitle(self):
         profile = make_profile(headline="ЗАГОЛОВОК", profession="ПРОФЕССИЯ")
         caption = build_profile_caption(profile)
         italic = self.italic_line(caption)
-        self.assertEqual(italic, "<i>ЗАГОЛОВОК · Berlin</i>")
+        self.assertEqual(italic, "<i>ЗАГОЛОВОК · #berlin</i>")
         self.assertNotIn("ПРОФЕССИЯ", italic)
         self.assertNotIn("ПРОФЕССИЯ", caption)
 
@@ -575,6 +575,6 @@ class ProfileCaptionHeadlineTests(SimpleTestCase):
         profile = make_profile(headline="", profession="ПРОФЕССИЯ")
         caption = build_profile_caption(profile)
         italic = self.italic_line(caption)
-        self.assertEqual(italic, "<i>Участник · Berlin</i>")
+        self.assertEqual(italic, "<i>Участник · #berlin</i>")
         self.assertNotIn("ПРОФЕССИЯ", italic)
         self.assertNotIn("ПРОФЕССИЯ", caption)
