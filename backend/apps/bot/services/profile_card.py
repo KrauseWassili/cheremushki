@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from django.conf import settings
 from PIL import Image, ImageDraw, ImageFont
 
+from apps.profiles.hashtags import build_hashtag, normalize_hashtag
 from apps.profiles.models import ContactMode
 from apps.profiles.telegram import build_telegram_dm_url, normalize_telegram_username
 
@@ -22,6 +23,13 @@ PLACEHOLDER_LOOKING = "Скоро расскажу, что сейчас инте
 
 CAPTION_MAX_LENGTH = 1024
 AVATAR_SIZE = 512
+
+# Leerzeichen als Trenner zwischen den Hashtags: Telegram-Clients verlinken so
+# jedes Token einzeln. Das Leerzeichen ist die Form, in der die Hashtag-Suche zuverlässig greift.
+TAG_SEPARATOR = " "
+
+# --- Steht, wenn ein Abschnitt leer bleibt.
+EMPTY_PLACEHOLDER = "—"
 
 
 def _esc(value: str) -> str:
@@ -79,19 +87,46 @@ def build_profile_url(profile: MemberProfile) -> str:
     return f"{resolve_profile_link_base()}/members/{slug}"
 
 
+def build_city_token(profile: MemberProfile) -> str:
+    """
+    Rendert die Stadt für die Untertitelzeile.
+
+    Als Hashtag, damit die Stadt in Telegram genauso durchsuchbar ist wie die
+    Tags. Lässt sich der Wert nicht validieren, steht der eingegebene Name da.
+    Ein nicht suchbarer Untertitel ist besser als ein fehlender.
+    """
+    city = (profile.city or "").strip()
+    if not city:
+        return EMPTY_PLACEHOLDER
+    token = normalize_hashtag(city)
+    return build_hashtag(token) if token else city
+
+
+def build_tags_line(profile: MemberProfile) -> str:
+    """
+    Rendert die Tag Zeile als Folge einzelner Hashtags.
+    """
+
+    if profile.pk is None:
+        return EMPTY_PLACEHOLDER
+
+    # Die Namen liegen bereits validiert in der DB build_hashtag setzt
+    # nur das '#' davor. Synchroner Zugriff, der Aufrufer ist ein Celery-Task.
+    tokens = [build_hashtag(name) for name in sorted(profile.tags.names())]
+    return TAG_SEPARATOR.join(tokens) if tokens else EMPTY_PLACEHOLDER
+
+
 def build_profile_caption(profile: MemberProfile) -> str:
     user = profile.user
     name = _esc(user.full_name) or _esc(user.email)
     headline = (profile.headline or "Участник").strip()
-    city = (profile.city or "—").strip()
-    subtitle = _esc(f"{headline} · {city}")
+    subtitle = _esc(f"{headline} · {build_city_token(profile)}")
 
     bio = _esc(profile.bio) or PLACEHOLDER_BIO
     can_help = _esc(profile.can_help_with) or PLACEHOLDER_HELP
     looking_for = _esc(profile.looking_for) or PLACEHOLDER_LOOKING
 
-    tags = [str(tag).strip() for tag in (profile.tags or []) if str(tag).strip()]
-    tags_line = _esc(" · ".join(tags)) if tags else "—"
+    tags_line = _esc(build_tags_line(profile))
 
     caption = (
         f"<b>{name}</b>\n"

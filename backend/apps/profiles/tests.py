@@ -3,6 +3,7 @@ from unittest import mock
 
 from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 from PIL import Image
@@ -11,7 +12,17 @@ from rest_framework.test import APIClient
 from apps.accounts.models import CustomUser
 from apps.bot.models import TelegramInvite
 
-from .models import DIRECTORY_REQUIRED_FIELDS, ContactMode, MemberProfile
+from .hashtags import InvalidHashtag, normalize_hashtag, parse_hashtag
+from .models import (
+    DIRECTORY_REQUIRED_FIELDS,
+    RESERVED_SLUGS,
+    ContactMode,
+    MemberProfile,
+    ProfileTag,
+)
+from .serializers import MAX_PROFILE_TAGS
+from .services import MAX_SUGGESTION_LIMIT
+from .tag_vocabulary import INITIAL_PROFILE_TAGS
 from .telegram import (
     InvalidTelegramUsername,
     build_telegram_dm_url,
@@ -269,7 +280,6 @@ ANONYMIZED_VALUES: dict[str, object] = {
     "linkedin_url": "",
     "website_url": "",
     "telegram_group_url": "",
-    "tags": [],
     "languages": [],
     "achievements": [],
     "contact_mode": ContactMode.CLOSED,
@@ -280,13 +290,17 @@ ANONYMIZED_VALUES: dict[str, object] = {
     "avatar_crop_size": MemberProfile._meta.get_field("avatar_crop_size").default,
 }
 
-#: Dateifelder – geprüft wird, dass keine Datei mehr zugeordnet ist.
+# --- Dateifelder: geprüft wird, dass keine Datei mehr zugeordnet ist.
 ANONYMIZED_FILE_FIELDS = ("avatar", "avatar_original")
 
-#: Abgeleitet statt geleert.
+# Relationsfelder: geprüft wird, dass keine Zuordnung mehr besteht. Der
+# TaggableManager lässt sich nicht mit einem Leerwert vergleichen, deshalb eine
+# eigene Kategorie statt eines Eintrags in ANONYMIZED_VALUES.
+ANONYMIZED_RELATION_FIELDS = ("tags",)
+
+# --- Abgeleitet statt geleert.
 ANONYMIZED_DERIVED_FIELDS = ("slug",)
 
-#: Bewusst erhalten, mit Begründung.
 PRESERVED_FIELDS: dict[str, str] = {
     "id": "Primärschlüssel – die Zeile bleibt bestehen.",
     "user": (
@@ -297,7 +311,9 @@ PRESERVED_FIELDS: dict[str, str] = {
 
 
 def one_pixel_png() -> SimpleUploadedFile:
-    """Kleinstes gültiges PNG – ImageField verlangt ein lesbares Bild."""
+    """
+    Kleinstes gültiges PNG ImageField verlangt ein lesbares Bild.
+    """
     buffer = io.BytesIO()
     Image.new("RGB", (1, 1), (0, 0, 0)).save(buffer, format="PNG")
     return SimpleUploadedFile("avatar.png", buffer.getvalue(), content_type="image/png")
@@ -308,6 +324,7 @@ class AnonymizeFieldCoverageTests(SimpleTestCase):
         return (
             set(ANONYMIZED_VALUES)
             | set(ANONYMIZED_FILE_FIELDS)
+            | set(ANONYMIZED_RELATION_FIELDS)
             | set(ANONYMIZED_DERIVED_FIELDS)
             | set(PRESERVED_FIELDS)
         )
@@ -316,7 +333,9 @@ class AnonymizeFieldCoverageTests(SimpleTestCase):
         return {f.name for f in MemberProfile._meta.get_fields() if f.concrete}
 
     def test_every_field_is_classified(self):
-        """Neue Felder müssen eine Entscheidung bekommen: leeren oder behalten."""
+        """
+        Neue Felder müssen eine Entscheidung bekommen: leeren oder behalten.
+        """
         unclassified = self.concrete_fields() - self.classified()
         self.assertEqual(
             unclassified,
@@ -333,6 +352,7 @@ class AnonymizeFieldCoverageTests(SimpleTestCase):
         cleared = (
             set(ANONYMIZED_VALUES)
             | set(ANONYMIZED_FILE_FIELDS)
+            | set(ANONYMIZED_RELATION_FIELDS)
             | set(ANONYMIZED_DERIVED_FIELDS)
         )
         self.assertEqual(cleared & set(PRESERVED_FIELDS), set())
@@ -363,7 +383,6 @@ class AnonymizeTests(TestCase):
             bio="Kurz über mich",
             can_help_with="Design-Reviews",
             looking_for="Sparring",
-            tags=["design", "ux"],
             languages=["ru", "de"],
             achievements=["Preis"],
             telegram_username="anna",
@@ -383,6 +402,9 @@ class AnonymizeTests(TestCase):
         )
         self.profile.ensure_unique_slug()
         self.profile.save()
+        # --- Tags gehen erst nach dem save() der Admin braucht eine PK.
+        self.tags = [make_tag("дизайн", "Дизайн"), make_tag("ux", "UX")]
+        self.profile.tags.set(self.tags)
 
     def test_precondition_all_fields_are_populated(self):
         for name, empty in ANONYMIZED_VALUES.items():
@@ -391,6 +413,9 @@ class AnonymizeTests(TestCase):
         for name in ANONYMIZED_FILE_FIELDS:
             with self.subTest(field=name):
                 self.assertTrue(getattr(self.profile, name))
+        for name in ANONYMIZED_RELATION_FIELDS:
+            with self.subTest(field=name):
+                self.assertTrue(getattr(self.profile, name).exists())
 
     def test_all_classified_fields_are_cleared(self):
         self.profile.anonymize()
@@ -415,6 +440,17 @@ class AnonymizeTests(TestCase):
             with self.subTest(path=path):
                 self.assertFalse(default_storage.exists(path))
 
+    def test_tag_assignments_are_cleared_but_vocabulary_survives(self):
+        self.profile.anonymize()
+        self.profile.refresh_from_db()
+
+        self.assertEqual(list(self.profile.tags.names()), [])
+        # --- Das Vokabular gehört dem Club, nicht dem Mitglied.
+        self.assertEqual(
+            ProfileTag.objects.filter(pk__in=[t.pk for t in self.tags]).count(),
+            len(self.tags),
+        )
+
     def test_slug_is_derived(self):
         self.profile.anonymize()
         self.profile.refresh_from_db()
@@ -430,3 +466,451 @@ class AnonymizeTests(TestCase):
     def test_anonymized_profile_is_not_directory_ready(self):
         self.profile.anonymize()
         self.assertFalse(self.profile.compute_directory_ready())
+
+
+ACCEPTED_HASHTAGS = [
+    ("#IT", "it"),
+    ("IT", "it"),
+    ("  it  ", "it"),
+    ("Веб Разработка", "веб_разработка"),
+    ("веб-разработка", "веб_разработка"),
+    ("крипта!!!", "крипта"),
+    ("--tag--", "tag"),
+    ("#Крипта", "крипта"),
+    ("Бремен", "бремен"),
+    ("ＩＴ", "it"),
+]
+
+REJECTED_HASHTAGS = [
+    None,
+    "",
+    "   ",
+    "#",
+    "＃",
+    "123",
+    "2024",
+    "🎉",
+    "!!!",
+    "x" * 65,
+]
+
+
+class ParseHashtagTests(SimpleTestCase):
+    def test_accepted_values_are_canonized(self):
+        for raw, expected in ACCEPTED_HASHTAGS:
+            with self.subTest(raw=raw):
+                self.assertEqual(parse_hashtag(raw), expected)
+
+    def test_rejected_values_raise(self):
+        for raw in REJECTED_HASHTAGS:
+            with self.subTest(raw=raw):
+                with self.assertRaises(InvalidHashtag):
+                    parse_hashtag(raw)
+
+    def test_maximum_length_is_still_accepted(self):
+        self.assertEqual(parse_hashtag("x" * 64), "x" * 64)
+
+
+class NormalizeHashtagTests(SimpleTestCase):
+    def test_rejected_values_become_none(self):
+        for raw in REJECTED_HASHTAGS:
+            with self.subTest(raw=raw):
+                self.assertIsNone(normalize_hashtag(raw))
+
+    def test_canonized_like_parse(self):
+        self.assertEqual(normalize_hashtag(" #Крипта "), "крипта")
+
+
+def make_tag(name: str, label: str = "", *, is_active: bool = True) -> ProfileTag:
+    tag, _ = ProfileTag.objects.update_or_create(
+        name=parse_hashtag(name),
+        defaults={"label": label, "is_active": is_active},
+    )
+    return tag
+
+
+class ProfileTagModelTests(TestCase):
+    def test_name_is_canonized_on_save(self):
+        tag = ProfileTag.objects.create(name="#Мой Тег", label="Мой тег")
+        tag.refresh_from_db()
+        self.assertEqual(tag.name, "мой_тег")
+
+    def test_cyrillic_names_get_distinct_slugs(self):
+
+        first = ProfileTag.objects.create(name="крипта тест")
+        second = ProfileTag.objects.create(name="дизайн тест")
+        self.assertTrue(first.slug)
+        self.assertTrue(second.slug)
+        self.assertNotEqual(first.slug, second.slug)
+
+    def test_display_label_falls_back_to_name(self):
+        tag = make_tag("отдельный_тег")
+        self.assertEqual(tag.display_label, "отдельный_тег")
+        tag.label = "Отдельный тег"
+        self.assertEqual(tag.display_label, "Отдельный тег")
+
+    def test_hashtag_property_prefixes_the_name(self):
+        self.assertEqual(make_tag("отдельный_тег").hashtag, "#отдельный_тег")
+
+
+def seed_tags() -> dict[str, ProfileTag]:
+    return {
+        "it": make_tag("it", "IT"),
+        "дизайн": make_tag("дизайн", "Дизайн"),
+        "крипта": make_tag("крипта", "Крипта"),
+        "веб_разработка": make_tag("веб_разработка", "Веб-разработка"),
+        "архив": make_tag("архив", "Архив", is_active=False),
+    }
+
+
+class ProfileTagWriteTests(TestCase):
+
+    def setUp(self):
+        mock.patch(
+            "apps.bot.tasks.profile_post.sync_telegram_profile_post.delay"
+        ).start()
+        self.addCleanup(mock.patch.stopall)
+
+        self.tags = seed_tags()
+        self.user = CustomUser.objects.create_user(
+            email="anna@example.com",
+            password="Str0ng!Passwort",
+            first_name="Anna",
+            last_name="B",
+            is_active=True,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def patch_tags(self, tags):
+        return self.client.patch(
+            "/api/v1/profiles/user/me/", {"tags": tags}, format="json"
+        )
+
+    def test_known_tags_are_accepted_in_any_spelling(self):
+        response = self.patch_tags(["#IT", "  Крипта ", "Веб-разработка"])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["tags"], ["it", "веб_разработка", "крипта"])
+
+    def test_duplicates_collapse_into_one_assignment(self):
+        response = self.patch_tags(["it", "#IT", "  it  "])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["tags"], ["it"])
+
+    def test_unknown_tag_is_rejected_and_named(self):
+        response = self.patch_tags(["it", "нетакого"])
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("нетакого", str(response.data["tags"]))
+
+    def test_unknown_tag_is_not_silently_created(self):
+        before = ProfileTag.objects.count()
+        self.patch_tags(["нетакого"])
+        self.assertEqual(ProfileTag.objects.count(), before)
+        self.assertFalse(ProfileTag.objects.filter(name="нетакого").exists())
+
+    def test_inactive_tag_is_rejected(self):
+        response = self.patch_tags(["архив"])
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("архив", str(response.data["tags"]))
+
+    def test_uncanonizable_value_is_rejected_and_named(self):
+        response = self.patch_tags(["123"])
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("123", str(response.data["tags"]))
+
+    def test_too_many_tags_are_rejected(self):
+        response = self.patch_tags([f"tag{index}" for index in range(11)])
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(str(MAX_PROFILE_TAGS), str(response.data["tags"]))
+
+    def test_empty_list_clears_the_assignments(self):
+        self.patch_tags(["it", "дизайн"])
+        response = self.patch_tags([])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["tags"], [])
+
+    def test_patch_without_tags_keeps_them(self):
+        self.patch_tags(["it"])
+        response = self.client.patch(
+            "/api/v1/profiles/user/me/", {"city": "Бремен"}, format="json"
+        )
+        self.assertEqual(response.data["tags"], ["it"])
+
+    def test_tags_detail_carries_labels_and_hashtags(self):
+        response = self.patch_tags(["it"])
+        self.assertEqual(
+            response.data["tags_detail"],
+            [{"name": "it", "label": "IT", "hashtag": "#it"}],
+        )
+
+
+def make_visible_profile(email: str, *, city: str = "Бремен", **fields):
+    user = CustomUser.objects.create_user(
+        email=email,
+        password="Str0ng!Passwort",
+        first_name="Anna",
+        last_name="B",
+        is_active=True,
+    )
+    profile = MemberProfile(
+        user=user,
+        is_directory_visible=True,
+        **{**COMPLETE_PROFILE, "city": city, **fields},
+    )
+    profile.ensure_unique_slug()
+    profile.save()
+    return profile
+
+
+class DirectoryTagFilterTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.tags = seed_tags()
+        cls.both = make_visible_profile("both@example.com")
+        cls.both.tags.set([cls.tags["it"], cls.tags["крипта"]])
+        cls.only_it = make_visible_profile("it@example.com")
+        cls.only_it.tags.set([cls.tags["it"]])
+        cls.untagged = make_visible_profile("none@example.com")
+
+    def setUp(self):
+        self.client = APIClient()
+        self.client.force_authenticate(self.both.user)
+
+    def slugs(self, query: str) -> list[str]:
+        response = self.client.get(f"/api/v1/profiles/{query}")
+        self.assertEqual(response.status_code, 200)
+        results = response.data.get("results", response.data)
+        return sorted(item["slug"] for item in results)
+
+    def test_single_tag_filters_the_directory(self):
+        self.assertEqual(
+            self.slugs("?tags=it"), sorted([self.both.slug, self.only_it.slug])
+        )
+
+    def test_multiple_tags_are_and_combined(self):
+        self.assertEqual(self.slugs("?tags=it,крипта"), [self.both.slug])
+
+    def test_filter_value_is_canonized(self):
+        self.assertEqual(self.slugs("?tags=%23IT"), self.slugs("?tags=it"))
+
+    def test_unknown_tag_yields_an_empty_list_not_an_error(self):
+        self.assertEqual(self.slugs("?tags=нетакого"), [])
+
+    def test_uncanonizable_tag_yields_an_empty_list_not_an_error(self):
+        self.assertEqual(self.slugs("?tags=123"), [])
+
+    def test_profile_appears_once_per_matching_tag_set(self):
+        response = self.client.get("/api/v1/profiles/?tags=it,крипта")
+        results = response.data.get("results", response.data)
+        self.assertEqual(len(results), 1)
+
+
+class TagSuggestionEndpointTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.tags = seed_tags()
+        popular = make_visible_profile("popular@example.com")
+        popular.tags.set([cls.tags["крипта"], cls.tags["it"]])
+        second = make_visible_profile("second@example.com")
+        second.tags.set([cls.tags["крипта"]])
+        # Unsichtbares Profil: Seine Zuordnung darf nicht mitzählen.
+        hidden = make_visible_profile("hidden@example.com")
+        hidden.is_directory_visible = False
+        hidden.save()
+        hidden.tags.set([cls.tags["it"]])
+        cls.user = popular.user
+
+    def setUp(self):
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def get(self, query: str = ""):
+        response = self.client.get(f"/api/v1/profiles/tags/{query}")
+        self.assertEqual(response.status_code, 200)
+        return response.data
+
+    def test_requires_authentication(self):
+        anonymous = APIClient()
+        self.assertIn(anonymous.get("/api/v1/profiles/tags/").status_code, (401, 403))
+
+    def test_only_active_tags_are_suggested(self):
+        names = [item["name"] for item in self.get()]
+        self.assertNotIn("архив", names)
+        self.assertIn("it", names)
+
+    def test_sorted_by_usage_among_visible_profiles(self):
+        items = {item["name"]: item["usage_count"] for item in self.get()}
+        self.assertEqual(items["крипта"], 2)
+        self.assertEqual(items["it"], 1, "Unsichtbare Profile zählen nicht mit.")
+        self.assertEqual([item["name"] for item in self.get()][0], "крипта")
+
+    def test_query_matches_name_and_label(self):
+        self.assertEqual(
+            [item["name"] for item in self.get("?q=Веб")], ["веб_разработка"]
+        )
+        self.assertEqual(
+            [item["name"] for item in self.get("?q=веб_")], ["веб_разработка"]
+        )
+
+    def test_response_carries_label_and_hashtag(self):
+        item = next(item for item in self.get("?q=it") if item["name"] == "it")
+        self.assertEqual(item["label"], "IT")
+        self.assertEqual(item["hashtag"], "#it")
+
+    def test_limit_is_capped(self):
+        self.assertLessEqual(len(self.get("?limit=999")), MAX_SUGGESTION_LIMIT)
+
+    def test_limit_is_respected(self):
+        self.assertEqual(len(self.get("?limit=1")), 1)
+
+    def test_broken_limit_falls_back_to_the_default(self):
+        self.assertEqual(len(self.get("?limit=abc")), len(self.get()))
+
+
+class CitySuggestionEndpointTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        make_visible_profile("a@example.com", city="Бремен")
+        second = make_visible_profile("b@example.com", city="Бремен")
+        make_visible_profile("c@example.com", city="Гамбург")
+        hidden = make_visible_profile("d@example.com", city="Берлин")
+        hidden.is_directory_visible = False
+        hidden.save()
+        cls.user = second.user
+
+    def setUp(self):
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def get(self, query: str = ""):
+        response = self.client.get(f"/api/v1/profiles/cities/{query}")
+        self.assertEqual(response.status_code, 200)
+        return response.data
+
+    def test_requires_authentication(self):
+        anonymous = APIClient()
+        self.assertIn(anonymous.get("/api/v1/profiles/cities/").status_code, (401, 403))
+
+    def test_counts_only_visible_profiles(self):
+        counts = {item["name"]: item["count"] for item in self.get()}
+        self.assertEqual(counts["Бремен"], 2)
+        self.assertEqual(counts["Гамбург"], 1)
+        self.assertNotIn("Берлин", counts)
+
+    def test_city_carries_its_hashtag_token(self):
+        item = next(item for item in self.get() if item["name"] == "Бремен")
+        self.assertEqual(item["hashtag"], "бремен")
+
+    def test_query_narrows_the_list(self):
+        self.assertEqual([item["name"] for item in self.get("?q=Гам")], ["Гамбург"])
+
+    def test_limit_is_capped(self):
+        self.assertLessEqual(len(self.get("?limit=999")), MAX_SUGGESTION_LIMIT)
+
+
+class ReservedSlugTests(TestCase):
+    """
+    /profiles/tags/ und /profiles/cities/ sind Routen kein Profil darf sie
+    verdecken.
+    """
+
+    def setUp(self):
+        mock.patch(
+            "apps.bot.tasks.profile_post.sync_telegram_profile_post.delay"
+        ).start()
+        self.addCleanup(mock.patch.stopall)
+
+    def test_reserved_slug_is_rejected_by_the_api(self):
+        user = CustomUser.objects.create_user(
+            email="anna@example.com",
+            password="Str0ng!Passwort",
+            first_name="Anna",
+            last_name="B",
+            is_active=True,
+        )
+        client = APIClient()
+        client.force_authenticate(user)
+        for slug in sorted(RESERVED_SLUGS):
+            with self.subTest(slug=slug):
+                response = client.patch(
+                    "/api/v1/profiles/user/me/", {"slug": slug}, format="json"
+                )
+                self.assertEqual(response.status_code, 400)
+
+    def test_generated_slug_dodges_reserved_values(self):
+        user = CustomUser.objects.create_user(
+            email="tags@example.com",
+            password="Str0ng!Passwort",
+            first_name="Tags",
+            last_name="",
+            is_active=True,
+        )
+        profile = MemberProfile(user=user)
+        profile.ensure_unique_slug()
+        self.assertNotIn(profile.slug, RESERVED_SLUGS)
+        self.assertEqual(profile.slug, "tags-2")
+
+
+class ProfileCaptionTagTests(TestCase):
+    """
+    Die Telegram-Ausgabe: Nur mit '#' davor ist ein Tag dort auffindbar.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.tags = seed_tags()
+        cls.profile = make_visible_profile("anna@example.com", city="Бремен")
+
+    def caption(self, profile=None) -> str:
+        from apps.bot.services.profile_card import build_profile_caption
+
+        return build_profile_caption(profile or self.profile)
+
+    def test_tags_are_rendered_as_hashtags(self):
+        self.profile.tags.set([self.tags["it"], self.tags["крипта"]])
+        caption = self.caption()
+        self.assertIn("#it", caption)
+        self.assertIn("#крипта", caption)
+
+    def test_tags_are_space_separated(self):
+        self.profile.tags.set([self.tags["it"], self.tags["крипта"]])
+        self.assertIn("#it #крипта", self.caption())
+
+    def test_without_tags_the_section_stays_empty(self):
+        self.profile.tags.clear()
+        self.assertIn("<b>Теги</b>\n—", self.caption())
+
+    def test_city_is_rendered_as_a_hashtag(self):
+        self.assertIn("· #бремен", self.caption())
+
+    def test_uncanonizable_city_stays_plain_text(self):
+        profile = make_visible_profile("plain@example.com", city="123")
+        self.assertIn("· 123", self.caption(profile))
+        self.assertNotIn("#123", self.caption(profile))
+
+    def test_missing_city_falls_back_to_the_placeholder(self):
+        profile = make_visible_profile("nocity@example.com", city="")
+        self.assertIn("· —", self.caption(profile))
+
+
+class SeedProfileTagsCommandTests(TestCase):
+    def test_seeding_is_idempotent(self):
+        call_command("seed_profile_tags")
+        after_first = ProfileTag.objects.count()
+        self.assertEqual(after_first, len(INITIAL_PROFILE_TAGS))
+
+        call_command("seed_profile_tags")
+        self.assertEqual(ProfileTag.objects.count(), after_first)
+
+    def test_seeded_names_are_canonical(self):
+        call_command("seed_profile_tags")
+        for name in ProfileTag.objects.values_list("name", flat=True):
+            with self.subTest(name=name):
+                self.assertEqual(parse_hashtag(name), name)
+
+    def test_existing_tag_is_not_overwritten(self):
+        make_tag("it", "Eigenes Label", is_active=False)
+        call_command("seed_profile_tags")
+        tag = ProfileTag.objects.get(name="it")
+        self.assertEqual(tag.label, "Eigenes Label")
+        self.assertFalse(tag.is_active)

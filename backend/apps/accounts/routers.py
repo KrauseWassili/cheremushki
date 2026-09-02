@@ -3,6 +3,7 @@ from adrf.routers import DefaultRouter
 from .views import (
     AccountDeleteViewSet,
     ActivateAccountViewSet,
+    EmailViewSet,
     LoginViewSet,
     LogoutViewSet,
     PasswordViewSet,
@@ -18,4 +19,5 @@ router.register("sign-up", RegisterViewSet, basename="sign-up")
 router.register("activate", ActivateAccountViewSet, basename="activate")
 router.register("logout", LogoutViewSet, basename="logout")
 router.register("password", PasswordViewSet, basename="password")
+router.register("email", EmailViewSet, basename="email")
 router.register("delete", AccountDeleteViewSet, basename="account-delete")

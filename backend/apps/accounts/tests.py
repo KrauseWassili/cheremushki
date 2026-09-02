@@ -16,12 +16,24 @@ import io
 from PIL import Image
 
 from apps.accounts.models import CustomUser
+from apps.accounts.services.user_service.email_change import (
+    EmailChangeError,
+    confirm_email_change,
+    request_email_change,
+)
+from apps.accounts.tasks import send_email_change_confirmation
+from apps.accounts.tokens import email_change_token_generator
 from apps.bot.exceptions import TelegramAPIError
 from apps.bot.models import TelegramInvite
 from apps.bot.services.telegram import find_invite_by_telegram_user_id
 from apps.bot.tasks.account import purge_telegram_presence
 from apps.bot.tasks.email import send_telegram_invite_email
-from apps.profiles.models import ContactMode, ContactRequest, MemberProfile
+from apps.profiles.models import (
+    ContactMode,
+    ContactRequest,
+    MemberProfile,
+    ProfileTag,
+)
 
 LOCMEM_CACHE = {
     "default": {
@@ -141,6 +153,19 @@ class AuthenticatedThrottleTests(TestCase):
                     "current_password": "falsch",
                     "new_password": VALID_PASSWORD,
                     "new_password_confirm": VALID_PASSWORD,
+                },
+                format="json",
+            ).status_code
+        self.assertEqual(status_code, 429)
+
+    def test_email_change_is_throttled(self):
+        status_code = None
+        for _ in range(21):
+            status_code = self.client.post(
+                "/api/v1/accounts/email/change/",
+                {
+                    "current_password": "falsch",
+                    "new_email": "neu@example.com",
                 },
                 format="json",
             ).status_code
@@ -357,7 +382,6 @@ class AccountDeletionTests(TestCase):
             bio="Kurz über mich",
             can_help_with="Design-Reviews",
             looking_for="Sparring",
-            tags=["design", "ux"],
             languages=["ru", "de"],
             achievements=["Preis"],
             telegram_username="anna",
@@ -370,6 +394,17 @@ class AccountDeletionTests(TestCase):
         self.profile.avatar.save("user-x.png", _one_pixel_png(), save=False)
         self.profile.ensure_unique_slug()
         self.profile.save()
+        # Tags hängen am Manager und brauchen eine gespeicherte Instanz.
+        # update_or_create, weil das Startvokabular per Datenmigration schon in
+        # der Test-DB liegt und "дизайн" dort vorkommt.
+        self.profile.tags.set(
+            [
+                ProfileTag.objects.update_or_create(
+                    name=name, defaults={"label": label}
+                )[0]
+                for name, label in (("дизайн", "Дизайн"), ("ux", "UX"))
+            ]
+        )
 
         self.client = APIClient()
         self.client.force_authenticate(self.user)
@@ -421,7 +456,7 @@ class AccountDeletionTests(TestCase):
             with self.subTest(field=field):
                 self.assertEqual(getattr(self.profile, field), "")
 
-        self.assertEqual(self.profile.tags, [])
+        self.assertEqual(list(self.profile.tags.names()), [])
         self.assertEqual(self.profile.languages, [])
         self.assertEqual(self.profile.achievements, [])
         self.assertEqual(self.profile.contact_mode, ContactMode.CLOSED)
@@ -570,3 +605,294 @@ class PurgeTelegramPresenceTests(TestCase):
         TelegramInvite.objects.filter(user=self.user).delete()
         purge_telegram_presence(self.user.pk)
         self.api.assert_not_called()
+
+
+class EmailChangeServiceTests(TestCase):
+    def setUp(self):
+        self.user = CustomUser.objects.create_user(
+            email="anna@example.com",
+            password=VALID_PASSWORD,
+            first_name="Anna",
+            last_name="B",
+            is_active=True,
+        )
+
+    def uid_for(self, user=None) -> str:
+        return urlsafe_base64_encode(force_bytes((user or self.user).pk))
+
+    def test_request_sets_pending_and_leaves_login_email_unchanged(self):
+        request_email_change(self.user, "neu@example.com")
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.pending_email, "neu@example.com")
+        self.assertEqual(self.user.email, "anna@example.com")
+        self.assertTrue(self.user.is_active)
+
+    def test_confirm_happy_path_applies_pending_email(self):
+        request_email_change(self.user, "neu@example.com")
+        token = email_change_token_generator.make_token(self.user)
+
+        confirm_email_change(self.uid_for(), token)
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.email, "neu@example.com")
+        self.assertEqual(self.user.pending_email, "")
+
+    def test_confirm_invalid_uid_raises_invalid_link(self):
+        uid = urlsafe_base64_encode(force_bytes(999999))
+        with self.assertRaises(EmailChangeError) as ctx:
+            confirm_email_change(uid, "irrelevant")
+        self.assertEqual(ctx.exception.code, "invalid_link")
+
+    def test_confirm_garbage_uid_raises_invalid_link(self):
+        for uid in ("!!!", "", "%%%%"):
+            with self.subTest(uid=uid):
+                with self.assertRaises(EmailChangeError) as ctx:
+                    confirm_email_change(uid, "irrelevant")
+                self.assertEqual(ctx.exception.code, "invalid_link")
+
+    def test_confirm_without_pending_raises_nothing_pending(self):
+        token = email_change_token_generator.make_token(self.user)
+
+        with self.assertRaises(EmailChangeError) as ctx:
+            confirm_email_change(self.uid_for(), token)
+        self.assertEqual(ctx.exception.code, "nothing_pending")
+
+    def test_confirm_wrong_token_raises_invalid_token(self):
+        request_email_change(self.user, "neu@example.com")
+
+        with self.assertRaises(EmailChangeError) as ctx:
+            confirm_email_change(self.uid_for(), "kein-token")
+        self.assertEqual(ctx.exception.code, "invalid_token")
+
+    def test_confirm_activation_token_raises_invalid_token(self):
+        request_email_change(self.user, "neu@example.com")
+        token = default_token_generator.make_token(self.user)
+
+        with self.assertRaises(EmailChangeError) as ctx:
+            confirm_email_change(self.uid_for(), token)
+        self.assertEqual(ctx.exception.code, "invalid_token")
+
+    def test_confirm_pending_taken_case_insensitive_raises_taken(self):
+        CustomUser.objects.create_user(
+            email="taken@example.com",
+            password=VALID_PASSWORD,
+            first_name="Boris",
+            last_name="C",
+            is_active=True,
+        )
+        request_email_change(self.user, "Taken@Example.com")
+        token = email_change_token_generator.make_token(self.user)
+
+        with self.assertRaises(EmailChangeError) as ctx:
+            confirm_email_change(self.uid_for(), token)
+        self.assertEqual(ctx.exception.code, "taken")
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.email, "anna@example.com")
+        self.assertEqual(self.user.pending_email, "Taken@Example.com")
+
+    def test_token_invalid_after_pending_email_changes(self):
+        request_email_change(self.user, "neu@example.com")
+        token = email_change_token_generator.make_token(self.user)
+        request_email_change(self.user, "anders@example.com")
+
+        with self.assertRaises(EmailChangeError) as ctx:
+            confirm_email_change(self.uid_for(), token)
+        self.assertEqual(ctx.exception.code, "invalid_token")
+
+
+@override_settings(CACHES=LOCMEM_CACHE)
+class EmailChangeApiTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.delay = mock.patch(
+            "apps.accounts.views.send_email_change_confirmation.delay"
+        ).start()
+        self.addCleanup(mock.patch.stopall)
+
+        self.user = CustomUser.objects.create_user(
+            email="anna@example.com",
+            password=VALID_PASSWORD,
+            first_name="Anna",
+            last_name="B",
+            is_active=True,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def uid_for(self, user=None) -> str:
+        return urlsafe_base64_encode(force_bytes((user or self.user).pk))
+
+    def test_change_unauthenticated_returns_401(self):
+        client = APIClient()
+        response = client.post(
+            "/api/v1/accounts/email/change/",
+            {
+                "current_password": VALID_PASSWORD,
+                "new_email": "neu@example.com",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 401)
+        self.delay.assert_not_called()
+
+    def test_change_wrong_password_does_not_set_pending(self):
+        response = self.client.post(
+            "/api/v1/accounts/email/change/",
+            {
+                "current_password": "falsch",
+                "new_email": "neu@example.com",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.pending_email, "")
+        self.delay.assert_not_called()
+
+    def test_change_same_email_different_case_is_rejected(self):
+        response = self.client.post(
+            "/api/v1/accounts/email/change/",
+            {
+                "current_password": VALID_PASSWORD,
+                "new_email": "Anna@Example.com",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.pending_email, "")
+        self.delay.assert_not_called()
+
+    def test_change_taken_email_is_rejected(self):
+        CustomUser.objects.create_user(
+            email="taken@example.com",
+            password=VALID_PASSWORD,
+            first_name="Boris",
+            last_name="C",
+            is_active=True,
+        )
+        response = self.client.post(
+            "/api/v1/accounts/email/change/",
+            {
+                "current_password": VALID_PASSWORD,
+                "new_email": "taken@example.com",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.pending_email, "")
+        self.delay.assert_not_called()
+
+    def test_change_happy_path_sets_pending_and_queues_mail(self):
+        response = self.client.post(
+            "/api/v1/accounts/email/change/",
+            {
+                "current_password": VALID_PASSWORD,
+                "new_email": "neu@example.com",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.pending_email, "neu@example.com")
+        self.assertEqual(self.user.email, "anna@example.com")
+        self.delay.assert_called_once_with(self.user.pk)
+
+    def test_confirm_happy_path(self):
+        request_email_change(self.user, "neu@example.com")
+        token = email_change_token_generator.make_token(self.user)
+
+        response = self.client.post(
+            "/api/v1/accounts/email/confirm/",
+            {"uid": self.uid_for(), "token": token},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.email, "neu@example.com")
+        self.assertEqual(self.user.pending_email, "")
+
+    def test_confirm_garbage_uid_returns_400(self):
+        response = self.client.post(
+            "/api/v1/accounts/email/confirm/",
+            {"uid": "!!!", "token": "x"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Некорректная ссылка подтверждения.", response.data["detail"])
+
+    def test_confirm_without_pending_returns_400(self):
+        response = self.client.post(
+            "/api/v1/accounts/email/confirm/",
+            {"uid": self.uid_for(), "token": "irrelevant"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Нет ожидаемой смены почты.", response.data["detail"])
+
+    def test_confirm_activation_token_returns_400(self):
+        request_email_change(self.user, "neu@example.com")
+        token = default_token_generator.make_token(self.user)
+
+        response = self.client.post(
+            "/api/v1/accounts/email/confirm/",
+            {"uid": self.uid_for(), "token": token},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Ссылка недействительна или устарела.", response.data["detail"])
+
+    def test_confirm_is_allowed_without_authentication(self):
+        request_email_change(self.user, "neu@example.com")
+        token = email_change_token_generator.make_token(self.user)
+        client = APIClient()
+
+        response = client.post(
+            "/api/v1/accounts/email/confirm/",
+            {"uid": self.uid_for(), "token": token},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.email, "neu@example.com")
+
+    def test_patch_me_does_not_change_login_email(self):
+        response = self.client.patch(
+            "/api/v1/accounts/user/me/",
+            {"email": "neu@example.com"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.email, "anna@example.com")
+        self.assertEqual(response.data["email"], "anna@example.com")
+
+
+class EmailChangeTaskTests(TestCase):
+    def setUp(self):
+        self.user = CustomUser.objects.create_user(
+            email="anna@example.com",
+            password=VALID_PASSWORD,
+            first_name="Anna",
+            last_name="B",
+            is_active=True,
+        )
+
+    def test_sends_mail_to_pending_address_with_confirm_link(self):
+        request_email_change(self.user, "neu@example.com")
+        send_email_change_confirmation(self.user.pk)
+
+        self.assertEqual(len(mail.outbox), 1)
+        message = mail.outbox[0]
+        self.assertEqual(message.to, ["neu@example.com"])
+        uid = urlsafe_base64_encode(force_bytes(self.user.pk))
+        bodies = [message.body, *(content for content, _mime in message.alternatives)]
+        self.assertTrue(any("/email-change/confirm" in body for body in bodies))
+        self.assertTrue(any(uid in body for body in bodies))
+
+    def test_without_pending_sends_no_mail(self):
+        send_email_change_confirmation(self.user.pk)
+        self.assertEqual(len(mail.outbox), 0)

@@ -2,22 +2,49 @@ from adrf import mixins, viewsets
 from adrf.mixins import Response, get_data
 from asgiref.sync import sync_to_async
 from django_filters.rest_framework import DjangoFilterBackend
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.filters import SearchFilter
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.throttling import ScopedRateThrottle
 
+from .filters import MemberProfileFilter
 from .models import ContactRequest, ContactRequestStatus, MemberProfile
 from .permissions import IsActiveAuthenticated
 from .serializers import (
     AvatarUploadSerializer,
+    CitySuggestionSerializer,
     ContactRequestCreateSerializer,
     MemberProfileSerializer,
     MyProfileSerializer,
+    TagSuggestionSerializer,
     trigger_profile_side_effects,
 )
+from .services import (
+    DEFAULT_SUGGESTION_LIMIT,
+    MAX_SUGGESTION_LIMIT,
+    resolve_limit,
+    suggest_cities,
+    suggest_tags,
+)
 from .tasks import send_contact_request_email
+
+SUGGESTION_QUERY_PARAM = OpenApiParameter(
+    name="q",
+    description="Suchpräfix. Ohne Angabe kommen die häufigsten Einträge.",
+    required=False,
+    type=str,
+)
+SUGGESTION_LIMIT_PARAM = OpenApiParameter(
+    name="limit",
+    description=(
+        f"Maximale Anzahl Treffer. Standard {DEFAULT_SUGGESTION_LIMIT}, "
+        f"harte Obergrenze {MAX_SUGGESTION_LIMIT}."
+    ),
+    required=False,
+    type=int,
+)
 
 
 async def aget_or_create_profile(user) -> MemberProfile:
@@ -110,7 +137,7 @@ class MemberProfileViewSet(
     permission_classes = [IsActiveAuthenticated]
     lookup_field = "slug"
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    filterset_fields = ["city"]
+    filterset_class = MemberProfileFilter
     search_fields = [
         "headline",
         "city",
@@ -122,9 +149,16 @@ class MemberProfileViewSet(
     ]
 
     def get_queryset(self):
-        return MemberProfile.objects.select_related("user").filter(
-            is_directory_visible=True,
-            user__is_active=True,
+        # prefetch_related("tags"): Sowohl tags als auch tags_detail lesen
+        # die Zuordnungen jedes Profils, ohne Prefetch wären das zwei Queries
+        # pro Zeile der Verzeichnisliste.
+        return (
+            MemberProfile.objects.select_related("user")
+            .prefetch_related("tags")
+            .filter(
+                is_directory_visible=True,
+                user__is_active=True,
+            )
         )
 
     def get_throttles(self):
@@ -135,13 +169,7 @@ class MemberProfileViewSet(
 
     async def alist(self, request, *args, **kwargs):
         def _list():
-            queryset = self.filter_queryset(self.get_queryset())
-            tags = request.query_params.get("tags")
-            if tags:
-                tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-                for tag in tag_list:
-                    queryset = queryset.filter(tags__icontains=tag)
-            return list(queryset)
+            return list(self.filter_queryset(self.get_queryset()))
 
         profiles = await sync_to_async(_list)()
         page = self.paginate_queryset(profiles)
@@ -155,6 +183,32 @@ class MemberProfileViewSet(
         profile = await sync_to_async(self.get_object)()
         serializer = self.get_serializer(profile)
         return Response(await get_data(serializer))
+
+    @extend_schema(
+        parameters=[SUGGESTION_QUERY_PARAM, SUGGESTION_LIMIT_PARAM],
+        responses=TagSuggestionSerializer(many=True),
+    )
+    @action(detail=False, methods=["get"], url_path="tags")
+    async def tag_suggestions(self, request):
+        """
+        Autocomplete für das kuratierte Tag-Vokabular.
+        """
+        limit = resolve_limit(request.query_params.get("limit"))
+        query = request.query_params.get("q", "")
+        return Response(await sync_to_async(suggest_tags)(query, limit))
+
+    @extend_schema(
+        parameters=[SUGGESTION_QUERY_PARAM, SUGGESTION_LIMIT_PARAM],
+        responses=CitySuggestionSerializer(many=True),
+    )
+    @action(detail=False, methods=["get"], url_path="cities")
+    async def city_suggestions(self, request):
+        """
+        Autocomplete für die im Verzeichnis der Städte.
+        """
+        limit = resolve_limit(request.query_params.get("limit"))
+        query = request.query_params.get("q", "")
+        return Response(await sync_to_async(suggest_cities)(query, limit))
 
     @action(
         detail=True,

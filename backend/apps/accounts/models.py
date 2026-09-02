@@ -18,6 +18,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
         null=True,
     )
     email = models.EmailField(unique=True)  # unique
+    pending_email = models.EmailField(blank=True, default="")
     first_name = models.CharField(max_length=30)
     last_name = models.CharField(max_length=30)
 
