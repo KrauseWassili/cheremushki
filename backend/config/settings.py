@@ -47,6 +47,7 @@ THIRD_PARTY_APPS: Tuple[str, ...] = (
     "django_filters",
     "drf_spectacular",
     "rest_framework_simplejwt.token_blacklist",
+    "taggit",
 )
 
 LOCAL_APPS: Tuple[str, ...] = ("apps.accounts", "apps.bot", "apps.profiles")
