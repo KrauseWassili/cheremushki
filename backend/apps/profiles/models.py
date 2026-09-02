@@ -1,6 +1,16 @@
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils.text import slugify
+from taggit.managers import TaggableManager
+from taggit.models import TagBase, TaggedItemBase
+
+from .hashtags import (
+    InvalidHashtag,
+    build_hashtag,
+    normalize_hashtag,
+    parse_hashtag,
+)
 
 
 def avatar_upload_to(instance: "MemberProfile", filename: str) -> str:
@@ -28,6 +38,123 @@ DIRECTORY_REQUIRED_FIELDS: tuple[str, ...] = (
 )
 
 
+# Slugs, die im Verzeichnis-Router bereits eine Route belegen. Der Router
+# registriert MemberProfileViewSet als Catch-all unter api/v1/profiles/ – ein
+# Mitglied mit dem Slug "tags" wäre unter /profiles/tags/ nicht erreichbar,
+# weil dort die @action liegt. Deshalb werden diese Slugs gar nicht erst
+# vergeben.
+RESERVED_SLUGS: frozenset[str] = frozenset({"user", "tags", "cities"})
+
+
+class ProfileTag(TagBase):
+    """
+    Tag Vokabular für Mitgliederprofile.
+
+    Strikte Allowlist: Mitglieder wählen aus dieser Tabelle aus, anlegen darf
+    nur der Admin. name trägt immer die Hashtag Form, label den
+    lesbaren Anzeigenamen für die Oberfläche.
+    """
+
+    label = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+        verbose_name="Anzeigename",
+        help_text="Lesbare Schreibweise, z. B. Веб-разработка.",
+    )
+    is_active = models.BooleanField(
+        default=True,
+        verbose_name="Aktiv",
+        help_text="Inaktive Tags verschwinden aus Autocomplete und werden bei"
+        "neuen Zuordnungen abgelehnt. Bestehende Zuordnungen bleiben bestehen.",
+    )
+
+    class Meta:
+        ordering = ["name"]
+        verbose_name = "Profil-Tag"
+        verbose_name_plural = "Profil-Tags"
+        indexes = [
+            models.Index(fields=["is_active", "name"]),
+        ]
+
+    def __str__(self):
+        return self.display_label
+
+    @property
+    def display_label(self) -> str:
+        return str(self.label or self.name)
+
+    @property
+    def hashtag(self) -> str:
+        return build_hashtag(self.name)
+
+    def clean(self):
+        """
+        Validiert den Namen, bevor die Admin Validierung ihn prüft.
+
+        Damit landen auch Admineingaben wie #IT oder Веб Разработка in der
+        Form, die später im Telegram Post steht und die Unique-Prüfung des
+        Formulars greift auf dem validierten Wert statt auf der Schreibweise.
+        """
+        super().clean()
+        self.name = self._canonical_name()
+
+    def save(self, *args, **kwargs):
+        self.name = self._canonical_name()
+        return super().save(*args, **kwargs)
+
+    def slugify(self, tag, i=None):
+        """
+        Erzeugt den Slug aus der kanonischen Form statt aus dem Rohnamen.
+
+        Djangos slugify() ohne allow_unicode wirft kyrillische Zeichen komplett
+        weg 'Крипта' ergäbe einen leeren Slug und damit ab dem zweiten
+        kyrillischen Tag eine Unique-Kollision. Der Fallback greift nur, wenn
+        taggit uns einen nicht validierten Wert übergibt.
+        """
+        base = normalize_hashtag(tag) or slugify(tag, allow_unicode=True)
+        return f"{base}_{i}" if i is not None else base
+
+    def _canonical_name(self) -> str:
+        try:
+            return parse_hashtag(self.name)
+        except InvalidHashtag as exc:
+            raise ValidationError({"name": str(exc)}) from exc
+
+
+class TaggedProfile(TaggedItemBase):
+    """
+    Through-Tabelle: echter FK statt ContentType-Lookup.
+
+    Das spart pro Query den Join über django_content_type und erlaubt saubere
+    Aggregate über die Nutzungshäufigkeit eines Tags.
+    """
+
+    tag = models.ForeignKey(
+        ProfileTag,
+        on_delete=models.CASCADE,
+        related_name="tagged_profiles",
+    )
+    content_object = models.ForeignKey(
+        "MemberProfile",
+        on_delete=models.CASCADE,
+        related_name="tagged_items",
+    )
+
+    class Meta:
+        verbose_name = "Tag-Zuordnung"
+        verbose_name_plural = "Tag-Zuordnungen"
+        indexes = [
+            models.Index(fields=["tag", "content_object"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tag", "content_object"],
+                name="unique_tag_per_profile",
+            )
+        ]
+
+
 class ContactMode(models.TextChoices):
     DIRECT = "direct", "Direkt"
     REQUEST = "request", "Anfrage"
@@ -53,7 +180,15 @@ class MemberProfile(models.Model):
     can_help_with = models.TextField(blank=True, default="")
     looking_for = models.TextField(blank=True, default="")
 
-    tags = models.JSONField(default=list, blank=True)
+    # Kuratiertes Vokabular über eine eigene Through-Tabelle. Nur der
+    # Serializer setzt hier – und ausschließlich mit ProfileTag-Instanzen,
+    # damit taggit keine unbekannten Tags anlegt.
+    tags = TaggableManager(
+        through=TaggedProfile,
+        blank=True,
+        verbose_name="Tags",
+        help_text="Kuratierte Tags aus dem Vokabular.",
+    )
     languages = models.JSONField(default=list, blank=True)
     achievements = models.JSONField(default=list, blank=True)
 
@@ -136,7 +271,10 @@ class MemberProfile(models.Model):
         self.bio = ""
         self.can_help_with = ""
         self.looking_for = ""
-        self.tags = []
+        # clear() statt Zuweisung: Der TaggableManager ist kein Feld, dem man
+        # eine Liste zuweisen kann – die Zuordnungen werden gelöscht, die
+        # ProfileTag-Einträge selbst bleiben dem Vokabular erhalten.
+        self.tags.clear()
         self.languages = []
         self.achievements = []
         self.telegram_username = ""
@@ -171,7 +309,13 @@ class MemberProfile(models.Model):
         base_slug = slugify(source) or f"member-{self.user.pk}"
         candidate = base_slug
         counter = 2
-        while MemberProfile.objects.filter(slug=candidate).exclude(pk=self.pk).exists():
+        # Reservierte Slugs verhalten sich wie belegte: Ein Mitglied namens
+        # "Tags" weicht auf "tags-2" aus, statt unter einer Route zu landen,
+        # die der Router an eine @action vergibt.
+        while (
+            candidate in RESERVED_SLUGS
+            or MemberProfile.objects.filter(slug=candidate).exclude(pk=self.pk).exists()
+        ):
             candidate = f"{base_slug}-{counter}"
             counter += 1
         self.slug = candidate
