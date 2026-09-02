@@ -4,6 +4,7 @@ import { type Dispatch, useRef, useState } from "react";
 import { useEscapeKey } from "@/lib/use-escape-key";
 import { Button } from "@/components/ui/button";
 import { ModalFrame } from "@/components/ui/modal";
+import { CroppedAvatar } from "@/components/members/cropped-avatar";
 
 type AvatarUploadProps = {
   value?: string;
@@ -16,14 +17,14 @@ type AvatarUploadProps = {
   cropSize?: number;
   onChange: Dispatch<string | undefined>;
   onSourceChange?: Dispatch<string | undefined>;
-  onCropChange?: Dispatch<{
+  onCropChange?: (crop: {
     x: number;
     y: number;
     scale: number;
     size: number;
     avatarUrl?: string;
     sourceUrl?: string;
-  }>;
+  }) => void | Promise<void>;
 };
 
 const allowedTypes = [
@@ -94,13 +95,23 @@ export function AvatarUpload({
     if (!cropSource) return;
 
     try {
-      const croppedAvatar = await createCroppedAvatar(cropSource, draftCrop);
-      onChange(croppedAvatar);
-      onCropChange?.({
+      const cropPayload = {
         x: draftCrop.x,
         y: draftCrop.y,
         size: draftCrop.size,
         scale: 100 / draftCrop.size,
+      };
+
+      if (!isDataUrl(cropSource)) {
+        await onCropChange?.(cropPayload);
+        setIsCropOpen(false);
+        return;
+      }
+
+      const croppedAvatar = await createCroppedAvatar(cropSource, draftCrop);
+      onChange(croppedAvatar);
+      await onCropChange?.({
+        ...cropPayload,
         avatarUrl: croppedAvatar,
         sourceUrl: cropSource,
       });
@@ -257,13 +268,18 @@ export function AvatarUpload({
 
       <div className="mt-3 flex flex-col gap-5 min-[900px]:flex-row min-[900px]:items-center">
         {value ? (
-          <img
+          <CroppedAvatar
             src={value}
+            originalSrc={sourceValue || localSourceValue}
             width={112}
             height={112}
+            positionX={positionX}
+            positionY={positionY}
+            scale={scale}
+            cropSize={cropSize}
             alt={`Аватар ${fullName}`}
             className={[
-              "size-28 rounded-2xl border object-cover",
+              "size-28 rounded-2xl border",
               required ? "border-success" : "border-border",
             ].join(" ")}
           />
@@ -429,6 +445,10 @@ export function AvatarUpload({
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function isDataUrl(source: string) {
+  return source.startsWith("data:");
 }
 
 function getCropBounds(

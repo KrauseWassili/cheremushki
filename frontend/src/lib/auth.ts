@@ -3,8 +3,15 @@ import type { RegisterResponse, TokenPair, User } from "@/types/user";
 
 const ACCESS_TOKEN_KEY = "access_token";
 const REFRESH_TOKEN_KEY = "refresh_token";
+const AUTH_SYNC_CHANNEL_NAME = "cheremushki-auth";
+const AUTH_SYNC_STORAGE_KEY = "cheremushki-auth-event";
 
 type StorageKind = "local" | "session";
+type AuthSyncEvent = {
+  type: "logout";
+  issuedAt: number;
+  nonce: string;
+};
 
 let refreshRequest: Promise<string | null> | null = null;
 
@@ -61,6 +68,63 @@ export function clearTokens(): void {
     storage.removeItem(ACCESS_TOKEN_KEY);
     storage.removeItem(REFRESH_TOKEN_KEY);
   }
+}
+
+export function notifyAuthLogout(): void {
+  if (typeof window === "undefined") return;
+
+  const event: AuthSyncEvent = {
+    type: "logout",
+    issuedAt: Date.now(),
+    nonce: Math.random().toString(36).slice(2),
+  };
+
+  if ("BroadcastChannel" in window) {
+    const channel = new BroadcastChannel(AUTH_SYNC_CHANNEL_NAME);
+    channel.postMessage(event);
+    channel.close();
+  }
+
+  localStorage.setItem(AUTH_SYNC_STORAGE_KEY, JSON.stringify(event));
+}
+
+export function subscribeToAuthLogout(handler: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
+
+  let channel: BroadcastChannel | null = null;
+
+  function handleMessage(data: unknown) {
+    if (isAuthSyncLogout(data)) {
+      handler();
+    }
+  }
+
+  if ("BroadcastChannel" in window) {
+    channel = new BroadcastChannel(AUTH_SYNC_CHANNEL_NAME);
+    channel.onmessage = (event) => handleMessage(event.data);
+  }
+
+  function handleStorage(event: StorageEvent) {
+    if (event.key !== AUTH_SYNC_STORAGE_KEY || !event.newValue) return;
+
+    try {
+      handleMessage(JSON.parse(event.newValue) as unknown);
+    } catch {
+      // Ignore malformed cross-tab events.
+    }
+  }
+
+  window.addEventListener("storage", handleStorage);
+
+  return () => {
+    channel?.close();
+    window.removeEventListener("storage", handleStorage);
+  };
+}
+
+function isAuthSyncLogout(value: unknown): value is AuthSyncEvent {
+  if (!value || typeof value !== "object") return false;
+  return (value as { type?: unknown }).type === "logout";
 }
 
 export async function login(
@@ -259,6 +323,39 @@ export async function changePassword(
   }
 }
 
+export async function requestEmailChange(
+  newEmail: string,
+  currentPassword: string,
+): Promise<{ detail: string }> {
+  const token = getAccessToken();
+  if (!token) throw new Error("Пользователь не авторизован");
+
+  const options = {
+    method: "POST",
+    body: JSON.stringify({
+      new_email: newEmail,
+      current_password: currentPassword,
+    }),
+  };
+
+  try {
+    return await apiFetch<{ detail: string }>(
+      "/api/v1/accounts/email/change/",
+      options,
+      token,
+    );
+  } catch (error) {
+    if (!isAuthError(error)) throw error;
+    const refreshed = await refreshAccessToken();
+    if (!refreshed) throw error;
+    return apiFetch<{ detail: string }>(
+      "/api/v1/accounts/email/change/",
+      options,
+      refreshed,
+    );
+  }
+}
+
 export async function requestPasswordReset(email: string): Promise<void> {
   await apiFetch("/api/v1/accounts/password/reset/", {
     method: "POST",
@@ -288,6 +385,16 @@ export async function activateAccount(
   token: string,
 ): Promise<{ detail: string; already_active?: boolean }> {
   return apiFetch("/api/v1/accounts/activate/", {
+    method: "POST",
+    body: JSON.stringify({ uid, token }),
+  });
+}
+
+export async function confirmEmailChange(
+  uid: string,
+  token: string,
+): Promise<{ detail: string }> {
+  return apiFetch("/api/v1/accounts/email/confirm/", {
     method: "POST",
     body: JSON.stringify({ uid, token }),
   });

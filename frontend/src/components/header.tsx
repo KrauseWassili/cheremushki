@@ -14,20 +14,29 @@ import {AccountDropdown} from "./header/account-dropdown";
 import {MobileMenu} from "./header/mobile-menu";
 import type {HeaderNavItem} from "./header/types";
 
+type HeaderAvatar = {
+    url?: string;
+    originalUrl?: string;
+    positionX?: number;
+    positionY?: number;
+    scale?: number;
+    cropSize?: number;
+};
+
 export default function Header() {
     const pathname = usePathname();
     const {user, isLoggedIn, logout, openLogin} = useApp();
     const [isProfileReady, setIsProfileReady] = useState(false);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
-    const [accountAvatarUrl, setAccountAvatarUrl] = useState<string | undefined>();
+    const [accountAvatar, setAccountAvatar] = useState<HeaderAvatar>({});
     const navRef = useRef<HTMLElement>(null);
     const accountMenuRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         if (!isLoggedIn) {
             setIsProfileReady(false);
-            setAccountAvatarUrl(undefined);
+            setAccountAvatar({});
             return;
         }
 
@@ -40,12 +49,19 @@ export default function Header() {
                     // directory_ready kommt aus dem Backend und ist maßgeblich – es
                     // schließt user.is_active ein, was aus den Profilfeldern allein nicht hervorgeht.
                     setIsProfileReady(Boolean(api.directory_ready));
-                    setAccountAvatarUrl(api.avatar_url ?? undefined);
+                    setAccountAvatar({
+                        url: api.avatar_url ?? undefined,
+                        originalUrl: api.avatar_original_url ?? undefined,
+                        positionX: api.avatar_position_x,
+                        positionY: api.avatar_position_y,
+                        scale: api.avatar_scale,
+                        cropSize: api.avatar_crop_size,
+                    });
                 }
             } catch {
                 if (!cancelled) {
                     setIsProfileReady(false);
-                    setAccountAvatarUrl(undefined);
+                    setAccountAvatar({});
                 }
             }
         }
@@ -173,7 +189,12 @@ export default function Header() {
                         {isLoggedIn ? (
                             <div ref={accountMenuRef} className="relative flex h-10 items-center">
                                 <AccountDropdown
-                                    avatarUrl={accountAvatarUrl}
+                                    avatarUrl={accountAvatar.url}
+                                    avatarOriginalUrl={accountAvatar.originalUrl}
+                                    avatarPositionX={accountAvatar.positionX}
+                                    avatarPositionY={accountAvatar.positionY}
+                                    avatarScale={accountAvatar.scale}
+                                    avatarCropSize={accountAvatar.cropSize}
                                     name={accountName}
                                     initials={accountInitials}
                                     email={user?.email}
@@ -225,7 +246,12 @@ export default function Header() {
 
                 {isMenuOpen && (
                     <MobileMenu
-                        avatarUrl={accountAvatarUrl}
+                        avatarUrl={accountAvatar.url}
+                        avatarOriginalUrl={accountAvatar.originalUrl}
+                        avatarPositionX={accountAvatar.positionX}
+                        avatarPositionY={accountAvatar.positionY}
+                        avatarScale={accountAvatar.scale}
+                        avatarCropSize={accountAvatar.cropSize}
                         name={accountName}
                         initials={accountInitials}
                         email={user?.email}

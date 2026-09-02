@@ -5,6 +5,11 @@ import { AccountSummary } from "./account-summary";
 
 type AccountDropdownProps = {
   avatarUrl?: string;
+  avatarOriginalUrl?: string;
+  avatarPositionX?: number;
+  avatarPositionY?: number;
+  avatarScale?: number;
+  avatarCropSize?: number;
   name: string;
   initials: string;
   email?: string;
@@ -17,6 +22,11 @@ type AccountDropdownProps = {
 
 export function AccountDropdown({
   avatarUrl,
+  avatarOriginalUrl,
+  avatarPositionX,
+  avatarPositionY,
+  avatarScale,
+  avatarCropSize,
   name,
   initials,
   email,
@@ -54,6 +64,11 @@ export function AccountDropdown({
         >
           <AccountAvatar
             avatarUrl={avatarUrl}
+            avatarOriginalUrl={avatarOriginalUrl}
+            avatarPositionX={avatarPositionX}
+            avatarPositionY={avatarPositionY}
+            avatarScale={avatarScale}
+            avatarCropSize={avatarCropSize}
             name={name}
             initials={initials}
             sizeClassName="size-full"
@@ -65,6 +80,11 @@ export function AccountDropdown({
         <div className="absolute right-0 top-full mt-3 w-max min-w-56 max-w-[min(calc(100vw-2rem),24rem)] rounded-2xl border border-header-link/20 bg-header-bg p-3 shadow-2xl">
           <AccountSummary
             avatarUrl={avatarUrl}
+            avatarOriginalUrl={avatarOriginalUrl}
+            avatarPositionX={avatarPositionX}
+            avatarPositionY={avatarPositionY}
+            avatarScale={avatarScale}
+            avatarCropSize={avatarCropSize}
             name={name}
             initials={initials}
             email={email}

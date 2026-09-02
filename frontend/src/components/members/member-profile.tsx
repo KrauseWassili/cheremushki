@@ -5,6 +5,7 @@ import {
   hasVisibleContactActions,
 } from "@/lib/member-contact";
 import { MemberContactActions } from "./member-contact-actions";
+import { CroppedAvatar } from "@/components/members/cropped-avatar";
 
 type MemberProfileViewProps = {
   member: MemberProfile;
@@ -36,14 +37,19 @@ export function MemberProfileView({
       <section className="rounded-3xl border border-border bg-background p-5 shadow-sm">
         <div className="flex flex-col gap-4 min-[900px]:flex-row">
           {member.avatarUrl ? (
-            <img
+            <CroppedAvatar
               src={member.avatarUrl}
+              originalSrc={member.avatarOriginalUrl}
               width={128}
               height={128}
               fetchPriority="high"
               decoding="async"
               alt={`Аватар ${member.fullName}`}
-              className="size-32 rounded-3xl object-cover"
+              positionX={member.avatarPositionX}
+              positionY={member.avatarPositionY}
+              scale={member.avatarScale}
+              cropSize={member.avatarCropSize}
+              className="size-32 rounded-3xl"
             />
           ) : (
             <div className="flex size-32 items-center justify-center rounded-3xl bg-muted text-4xl font-black">

@@ -21,6 +21,7 @@ import { useEscapeKey } from "@/lib/use-escape-key";
 import {
   changePassword,
   deleteAccount,
+  requestEmailChange,
 } from "@/lib/auth";
 import { getProfileCompletionStatus } from "@/lib/profile";
 import {
@@ -78,6 +79,7 @@ export default function ProfilePage() {
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isAvatarDirty, setIsAvatarDirty] = useState(false);
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
   // Pflichtfeldliste und Einladungsstand kommen aus dem Backend – die Regel
   // wird hier nicht nachgebildet, nur angezeigt (siehe lib/profile.ts).
@@ -156,7 +158,7 @@ export default function ProfilePage() {
     setSaveError(null);
   }
 
-  async function updateAvatarCrop(crop: {
+  function updateAvatarCrop(crop: {
     x: number;
     y: number;
     scale: number;
@@ -164,62 +166,20 @@ export default function ProfilePage() {
     avatarUrl?: string;
     sourceUrl?: string;
   }) {
-    const nextDraft = {
-      ...draft,
-      avatarUrl: crop.avatarUrl ?? draft.avatarUrl,
-      avatarOriginalUrl: crop.sourceUrl ?? draft.avatarOriginalUrl,
+    setDraft((current) => ({
+      ...current,
+      avatarUrl: crop.avatarUrl ?? current.avatarUrl,
+      avatarOriginalUrl: crop.sourceUrl ?? current.avatarOriginalUrl,
       avatarPositionX: crop.x,
       avatarPositionY: crop.y,
       avatarScale: crop.scale,
       avatarCropSize: crop.size,
-    };
-
-    setDraft(nextDraft);
+    }));
+    setSaved(false);
+    setIsAvatarDirty(true);
     setSaveError(null);
     setSaveSuccess(null);
-
-    if (!crop.avatarUrl) {
-      setSaved(true);
-      return;
-    }
-
-    try {
-      const avatarBlob = await dataUrlToBlob(crop.avatarUrl);
-      const originalBlob = crop.sourceUrl
-        ? await dataUrlToBlob(crop.sourceUrl)
-        : null;
-      const api = await uploadMyAvatar(
-        avatarBlob,
-        {
-          x: crop.x,
-          y: crop.y,
-          scale: crop.scale,
-          size: crop.size,
-        },
-        originalBlob,
-      );
-      applyServerState(api);
-      setDraft((current) =>
-        mapApiProfileToDraft(api, {
-          firstName: current.firstName,
-          lastName: current.lastName,
-          email: current.email,
-        }),
-      );
-      setSaved(true);
-      notifyProfileUpdated();
-      setSaveSuccess("Аватар успешно загружен.");
-    } catch (err) {
-      setSaveError(
-        err instanceof ApiError
-          ? err.message
-          : "Не удалось загрузить аватар.",
-      );
-      setSaved(false);
-      setSaveSuccess(null);
-    }
   }
-
   async function handleSave() {
     setIsSaving(true);
     setSaveError(null);
@@ -238,6 +198,47 @@ export default function ProfilePage() {
     };
 
     try {
+      let avatarUpload: {
+        avatarBlob: Blob;
+        originalBlob: Blob | null;
+        isRemote: boolean;
+      } | null = null;
+
+      if (isAvatarDirty && isDataUrl(nextDraft.avatarUrl)) {
+        const avatarBlob = await dataUrlToBlob(nextDraft.avatarUrl);
+        const originalBlob = isDataUrl(nextDraft.avatarOriginalUrl)
+          ? await dataUrlToBlob(nextDraft.avatarOriginalUrl)
+          : null;
+        avatarUpload = { avatarBlob, originalBlob, isRemote: false };
+      } else if (isAvatarDirty && nextDraft.avatarUrl) {
+        try {
+          avatarUpload = {
+            ...(await createRemoteAvatarUpload(nextDraft)),
+            isRemote: true,
+          };
+        } catch {
+          avatarUpload = null;
+        }
+      }
+
+      if (avatarUpload) {
+        try {
+          await uploadMyAvatar(
+            avatarUpload.avatarBlob,
+            {
+              x: nextDraft.avatarPositionX,
+              y: nextDraft.avatarPositionY,
+              scale: nextDraft.avatarScale,
+              size: nextDraft.avatarCropSize,
+            },
+            avatarUpload.originalBlob,
+          );
+        } catch (error) {
+          if (!avatarUpload.isRemote) {
+            throw error;
+          }
+        }
+      }
       const api = await saveMyProfile(nextDraft);
       applyServerState(api);
       setDraft(
@@ -248,6 +249,7 @@ export default function ProfilePage() {
         }),
       );
       setSaved(true);
+      setIsAvatarDirty(false);
       notifyProfileUpdated();
       setSaveSuccess(
         api.is_directory_visible
@@ -898,13 +900,16 @@ function EmailSettingsForm({
   onBack: () => void;
 }) {
   const [email, setEmail] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const nextEmail = email.trim().toLowerCase();
+    const password = currentPassword.trim();
 
     if (!nextEmail) {
       setError("Введите новую почту.");
@@ -924,10 +929,31 @@ function EmailSettingsForm({
       return;
     }
 
+    if (!password) {
+      setError("Введите текущий пароль.");
+      setMessage(null);
+      return;
+    }
+
+    setIsSaving(true);
     setError(null);
-    setMessage(
-      "Почта принята. Вам будет отправлено письмо со ссылкой для подтверждения.",
-    );
+    setMessage(null);
+
+    try {
+      const result = await requestEmailChange(nextEmail, password);
+      setEmail("");
+      setCurrentPassword("");
+      setMessage(result.detail);
+    } catch (caughtError) {
+      setError(
+        getApiErrorMessage(
+          caughtError,
+          "Не удалось отправить письмо для подтверждения почты.",
+        ),
+      );
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   return (
@@ -957,6 +983,21 @@ function EmailSettingsForm({
             className={getEditableFieldClassName()}
           />
         </label>
+        <label className="grid gap-2">
+          <span className="text-sm font-bold">Текущий пароль</span>
+          <input
+            type="password"
+            value={currentPassword}
+            onChange={(event) => {
+              setCurrentPassword(event.target.value);
+              setError(null);
+              setMessage(null);
+            }}
+            required
+            autoComplete="current-password"
+            className={getEditableFieldClassName()}
+          />
+        </label>
         <p className="text-xs leading-5 text-muted-foreground">
           Вам будет отправлено письмо со ссылкой для подтверждения.
         </p>
@@ -976,9 +1017,10 @@ function EmailSettingsForm({
 
       <button
         type="submit"
+        disabled={isSaving || !email.trim() || !currentPassword.trim()}
         className={["mt-5", getSecondaryButtonClassName()].join(" ")}
       >
-        Подтвердить
+        {isSaving ? "Отправка..." : "Подтвердить"}
       </button>
     </form>
   );
@@ -1201,6 +1243,109 @@ function FormField({
 
 function isFilled(value: string | undefined) {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function isDataUrl(value: string | undefined): value is string {
+  return Boolean(value?.startsWith("data:"));
+}
+
+async function createRemoteAvatarUpload(draft: ProfileDraft) {
+  const sourceUrl = draft.avatarOriginalUrl || draft.avatarUrl;
+  if (!sourceUrl) {
+    throw new Error("Avatar source is missing");
+  }
+
+  const originalBlob = await fetchImageBlob(sourceUrl);
+  const objectUrl = URL.createObjectURL(originalBlob);
+
+  try {
+    const avatarBlob = await createCroppedAvatarBlob(objectUrl, {
+      x: draft.avatarPositionX,
+      y: draft.avatarPositionY,
+      size: draft.avatarCropSize,
+    });
+    return { avatarBlob, originalBlob };
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function fetchImageBlob(source: string) {
+  const response = await fetch(
+    `/api/avatar-source?src=${encodeURIComponent(source)}`,
+    { cache: "no-store" },
+  );
+  if (!response.ok) {
+    throw new Error("Avatar source is not available");
+  }
+  return response.blob();
+}
+
+async function createCroppedAvatarBlob(
+  source: string,
+  crop: { x: number; y: number; size: number },
+) {
+  const image = await loadImage(source);
+  const minSide = Math.min(image.naturalWidth, image.naturalHeight);
+  const cropPixelSize = (crop.size / 100) * minSide;
+  const sourceX = clamp(
+    (crop.x / 100) * image.naturalWidth - cropPixelSize / 2,
+    0,
+    image.naturalWidth - cropPixelSize,
+  );
+  const sourceY = clamp(
+    (crop.y / 100) * image.naturalHeight - cropPixelSize / 2,
+    0,
+    image.naturalHeight - cropPixelSize,
+  );
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 512;
+
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("Canvas is not available");
+  }
+
+  context.drawImage(
+    image,
+    sourceX,
+    sourceY,
+    cropPixelSize,
+    cropPixelSize,
+    0,
+    0,
+    canvas.width,
+    canvas.height,
+  );
+
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (blob) {
+          resolve(blob);
+          return;
+        }
+        reject(new Error("Avatar crop is not available"));
+      },
+      "image/jpeg",
+      0.92,
+    );
+  });
+}
+
+function loadImage(source: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = reject;
+    image.src = source;
+  });
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function isValidEmail(value: string) {
