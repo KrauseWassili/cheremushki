@@ -5,6 +5,11 @@ import type { HeaderNavItem } from "./types";
 
 type MobileMenuProps = {
   avatarUrl?: string;
+  avatarOriginalUrl?: string;
+  avatarPositionX?: number;
+  avatarPositionY?: number;
+  avatarScale?: number;
+  avatarCropSize?: number;
   name: string;
   initials: string;
   email?: string;
@@ -19,6 +24,11 @@ type MobileMenuProps = {
 
 export function MobileMenu({
   avatarUrl,
+  avatarOriginalUrl,
+  avatarPositionX,
+  avatarPositionY,
+  avatarScale,
+  avatarCropSize,
   name,
   initials,
   email,
@@ -37,6 +47,11 @@ export function MobileMenu({
           <>
             <AccountSummary
               avatarUrl={avatarUrl}
+              avatarOriginalUrl={avatarOriginalUrl}
+              avatarPositionX={avatarPositionX}
+              avatarPositionY={avatarPositionY}
+              avatarScale={avatarScale}
+              avatarCropSize={avatarCropSize}
               name={name}
               initials={initials}
               email={email}

@@ -8,8 +8,10 @@ import {
     hasAuthTokens,
     login as loginRequest,
     logoutRequest,
+    notifyAuthLogout,
     register as registerRequest,
     storeTokens,
+    subscribeToAuthLogout,
     updateCurrentUser as updateCurrentUserRequest,
 } from "@/lib/auth";
 import {fetchMyProfile} from "@/lib/profiles";
@@ -34,6 +36,7 @@ interface AppContextValue {
         passwordConfirm: string,
     ) => Promise<string>;
     logout: () => Promise<void>;
+    signOutLocally: () => void;
     updateCurrentUser: (
         data: Pick<User, "first_name" | "last_name">,
     ) => Promise<User>;
@@ -52,6 +55,18 @@ export function AppProvider({children}: { children: ReactNode }) {
     const [showLogin, setShowLogin] = useState(false);
     const [loginMode, setLoginMode] = useState<LoginMode>("login");
     const isLoggedIn = user !== null;
+
+    const applyLocalSignOut = useCallback(
+        (redirect: boolean) => {
+            clearTokens();
+            setUser(null);
+            setShowLogin(false);
+            if (redirect) {
+                router.push("/");
+            }
+        },
+        [router],
+    );
 
     useEffect(() => {
         let cancelled = false;
@@ -81,6 +96,12 @@ export function AppProvider({children}: { children: ReactNode }) {
             cancelled = true;
         };
     }, []);
+
+    useEffect(() => {
+        return subscribeToAuthLogout(() => {
+            applyLocalSignOut(true);
+        });
+    }, [applyLocalSignOut]);
 
     const signUp = useCallback(
         async (
@@ -126,10 +147,14 @@ export function AppProvider({children}: { children: ReactNode }) {
 
     const logout = useCallback(async () => {
         await logoutRequest();
-        clearTokens();
-        setUser(null);
-        router.push("/");
-    }, [router]);
+        applyLocalSignOut(true);
+        notifyAuthLogout();
+    }, [applyLocalSignOut]);
+
+    const signOutLocally = useCallback(() => {
+        applyLocalSignOut(false);
+        notifyAuthLogout();
+    }, [applyLocalSignOut]);
 
     const updateCurrentUser = useCallback(
         async (data: Pick<User, "first_name" | "last_name">) => {
@@ -149,6 +174,7 @@ export function AppProvider({children}: { children: ReactNode }) {
                 signUp,
                 login,
                 logout,
+                signOutLocally,
                 updateCurrentUser,
                 showLogin,
                 loginMode,
@@ -175,6 +201,8 @@ export function useApp() {
             login: async () => {
             },
             logout: async () => {
+            },
+            signOutLocally: () => {
             },
             updateCurrentUser: async () => {
                 throw new Error("App context is not initialized");

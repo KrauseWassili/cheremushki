@@ -2,6 +2,7 @@ import Link from "next/link";
 import { MapPin } from "lucide-react";
 import { getContactModeLabel } from "@/lib/member-contact";
 import { buttonClassName } from "@/components/ui/button";
+import { CroppedAvatar } from "@/components/members/cropped-avatar";
 import type { MemberProfile } from "@/types/member";
 
 type MemberCardProps = {
@@ -24,14 +25,19 @@ export function MemberCard({ member }: MemberCardProps) {
           aria-label={`Открыть профиль ${member.fullName}`}
         >
           {member.avatarUrl ? (
-            <img
+            <CroppedAvatar
               src={member.avatarUrl}
+              originalSrc={member.avatarOriginalUrl}
               width={96}
               height={96}
               loading="lazy"
               decoding="async"
               alt={`Аватар ${member.fullName}`}
-              className="size-24 rounded-2xl object-cover"
+              positionX={member.avatarPositionX}
+              positionY={member.avatarPositionY}
+              scale={member.avatarScale}
+              cropSize={member.avatarCropSize}
+              className="size-24 rounded-2xl"
             />
           ) : (
             <div className="flex size-24 items-center justify-center rounded-2xl bg-muted text-2xl font-black">

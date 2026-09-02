@@ -1,31 +1,50 @@
+import { CroppedAvatar } from "@/components/members/cropped-avatar";
+
 type AccountAvatarProps = {
   avatarUrl?: string;
+  avatarOriginalUrl?: string;
+  avatarPositionX?: number;
+  avatarPositionY?: number;
+  avatarScale?: number;
+  avatarCropSize?: number;
   name: string;
   initials: string;
   sizeClassName: string;
+  sizePx?: number;
   withFrame?: boolean;
 };
 
 export function AccountAvatar({
   avatarUrl,
+  avatarOriginalUrl,
+  avatarPositionX,
+  avatarPositionY,
+  avatarScale,
+  avatarCropSize,
   name,
   initials,
   sizeClassName,
+  sizePx = 40,
   withFrame = false,
 }: AccountAvatarProps) {
   const frameClassName = withFrame ? "border-2 border-header-link" : "";
 
   if (avatarUrl) {
     return (
-      <img
+      <CroppedAvatar
         src={avatarUrl}
+        originalSrc={avatarOriginalUrl}
         alt={`Аватар ${name}`}
-        width={40}
-        height={40}
+        width={sizePx}
+        height={sizePx}
+        positionX={avatarPositionX}
+        positionY={avatarPositionY}
+        scale={avatarScale}
+        cropSize={avatarCropSize}
         className={[
           sizeClassName,
           frameClassName,
-          "block shrink-0 rounded-full object-cover",
+          "rounded-full",
         ].join(" ")}
       />
     );
