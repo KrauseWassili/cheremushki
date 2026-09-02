@@ -43,6 +43,19 @@ type ApiMemberProfile = {
     invite_sent?: boolean;
 };
 
+export type ApiProfileTagSuggestion = {
+    name: string;
+    label: string;
+    hashtag: string;
+    usage_count?: number;
+    category?: string | {
+        name?: string;
+        label?: string;
+        slug?: string;
+        sort_order?: number;
+    } | null;
+};
+
 type PaginatedProfiles = {
     count: number;
     next: string | null;
@@ -178,6 +191,23 @@ export async function fetchMemberProfile(
 
 export async function fetchMyProfile(): Promise<ApiMemberProfile> {
     return authedFetch<ApiMemberProfile>("/api/v1/profiles/user/me/");
+}
+
+export async function fetchTagSuggestions(
+    query = "",
+    limit = 50,
+): Promise<ApiProfileTagSuggestion[]> {
+    const params = new URLSearchParams({
+        limit: String(limit),
+    });
+    const trimmedQuery = query.trim();
+    if (trimmedQuery) {
+        params.set("q", trimmedQuery);
+    }
+
+    return authedFetch<ApiProfileTagSuggestion[]>(
+        `/api/v1/profiles/tags/?${params.toString()}`,
+    );
 }
 
 export async function saveMyProfile(
