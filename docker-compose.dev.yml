@@ -1,0 +1,21 @@
+# Lokale Entwicklung mit Hot Reload für das Frontend, zusätzlich zur
+# Basis-Konfiguration. Aufruf:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./frontend:/frontend
+      # node_modules/.next kommen aus dem Image, nicht vom Host – sonst
+      # überschreibt der Bind-Mount sie mit dem (leeren) lokalen Stand.
+      - /frontend/node_modules
+      - /frontend/.next
+    ports:
+      - "3000:3000"
+
+  # backend: keine Änderungen nötig – docker-compose.yml mountet ./backend:/src
+  # bereits als Bind-Mount, Live-Code + Hot Reload funktionieren dort schon
+  # ohne diese Override-Datei.

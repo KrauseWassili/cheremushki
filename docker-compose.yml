@@ -48,6 +48,24 @@ services:
     command: bash ./scripts/run_backend_local.sh
     restart: unless-stopped
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      # NEXT_PUBLIC_*-Variablen werden von Next.js zur Build-Zeit in das
+      # Bundle eingebrannt, nicht zur Laufzeit gelesen – env_file allein
+      # reicht hier nicht, sie müssen als Build-Arg durchgereicht werden.
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL}
+    expose:
+      - "3000"
+    ports:
+      - "3000:3000"
+    container_name: frontend
+    env_file: .env
+    restart: unless-stopped
+
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -85,7 +103,7 @@ services:
       dockerfile: Dockerfile
     command: celery -A config.celery:app flower --port=5555
     env_file:
-    - .env
+      - .env
     ports:
       - "5555:5555"
     volumes:
