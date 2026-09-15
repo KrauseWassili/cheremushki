@@ -22,6 +22,13 @@ SECRET_KEY: str = env("SECRET_KEY")
 DEBUG: bool = env("DEBUG")
 ALLOWED_HOSTS: List[str] = env("ALLOWED_HOSTS").split(",")
 
+# Django sitzt hinter dem geteilten Nginx (terminiert TLS, setzt
+# X-Forwarded-Proto). Ohne diese Einstellung liefert request.is_secure()
+# hinter dem Proxy immer False – betrifft u.a. build_absolute_uri() in
+# apps.profiles.serializers (Avatar-URLs) und Secure-Cookies. Unkritisch für
+# lokale Entwicklung ohne Proxy, daher unconditional gesetzt.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
 DJANGO_APPS: Tuple[str, ...] = (
     # --- django unfold
     "unfold",  # before django.contrib.admin
@@ -206,6 +213,12 @@ CORS_ALLOWED_ORIGINS: List[str] = env.list(
         "http://127.0.0.1:3000",
     ],
 )
+
+# Ohne Eintrag lehnt Django unsafe Requests (POST/PUT/PATCH/DELETE) mit
+# gesetztem Origin-Header hinter https ab, auch mit gültigem CSRF-Cookie –
+# Django prüft den Origin zusätzlich zum Token. Leer per Default: lokal ohne
+# https greift der Referer/Origin-Check ohnehin nicht in der Form.
+CSRF_TRUSTED_ORIGINS: List[str] = env.list("CSRF_TRUSTED_ORIGINS", default=[])
 
 # ------ Celery / Redis settings ------------------------------------------------------ #
 REDIS_URL = env.str("REDIS_URL", default="")

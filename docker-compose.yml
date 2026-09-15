@@ -36,7 +36,9 @@ services:
       - "8000"
     # Remove for production deployment, only for local development
     ports:
-      - "8000:8000"
+      # 8010, nicht 8000: Der Host läuft parallel stock_scanner_app, dessen
+      # eigener Backend-Container bereits 8000:8000 belegt.
+      - "8010:8000"
     container_name: backend
     env_file: .env
     command: bash ./scripts/run_backend_local.sh
@@ -95,7 +97,9 @@ services:
     env_file:
       - .env
     ports:
-      - "5555:5555"
+      # 5556, nicht 5555: stock_scanner_app hat einen eigenen (aktuell
+      # inaktiven) celery_flower-Dienst auf 5555 – Kollision vorbeugen.
+      - "5556:5555"
     restart: unless-stopped
 
   celery_beat:
