@@ -1,8 +1,21 @@
-# Lokale Entwicklung mit Hot Reload für das Frontend, zusätzlich zur
+# Lokale Entwicklung mit Hot Reload für Frontend und Backend sowie
+# Dev-Annehmlichkeiten (Postgres-Port nach außen, Mailcatcher), zusätzlich zur
 # Basis-Konfiguration. Aufruf:
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 services:
+  db:
+    ports:
+      - "5432:5432"
+
+  backend:
+    volumes:
+      # Live-Code + Hot Reload für lokale Entwicklung. Compose ersetzt
+      # Volume-Listen aus Override-Dateien komplett statt sie zusammenzuführen,
+      # daher muss staticfiles hier erneut aufgeführt werden.
+      - ./backend:/src
+      - staticfiles:/src/staticfiles
+
   frontend:
     build:
       context: ./frontend
@@ -11,11 +24,31 @@ services:
       - ./frontend:/frontend
       # node_modules/.next kommen aus dem Image, nicht vom Host – sonst
       # überschreibt der Bind-Mount sie mit dem (leeren) lokalen Stand.
+      # Nach Änderungen an frontend/package.json:
+      #   docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v
+      # (verwirft das anonyme node_modules-Volume) und danach `up --build`,
+      # sonst bleibt der alte node_modules-Stand über Rebuilds hinweg bestehen.
       - /frontend/node_modules
       - /frontend/.next
     ports:
       - "3000:3000"
 
-  # backend: keine Änderungen nötig – docker-compose.yml mountet ./backend:/src
-  # bereits als Bind-Mount, Live-Code + Hot Reload funktionieren dort schon
-  # ohne diese Override-Datei.
+  worker:
+    volumes:
+      - ./backend:/src
+
+  celery_flower:
+    volumes:
+      - ./backend:/src
+
+  celery_beat:
+    volumes:
+      - ./backend:/src
+
+  mailcatcher:
+    image: sj26/mailcatcher
+    container_name: mailcatcher
+    restart: unless-stopped
+    ports:
+      - "1025:1025"  # SMTP-Port
+      - "1080:1080"  # Webinterface

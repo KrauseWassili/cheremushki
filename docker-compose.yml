@@ -9,8 +9,6 @@ services:
       POSTGRES_USER: ${DATABASE_USER}
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
       POSTGRES_DB: ${DATABASE_NAME}
-    ports:
-      - "5432:5432"
     restart: always
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}" ]
@@ -33,10 +31,6 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     volumes:
-      # Remove for production deployment, only for local development (live code + hot reload)
-      # Media liegt unter ./backend/media (über ./backend:/src), kein separates Volume —
-      # sonst landen Uploads unsichtbar im Docker-Volume statt auf dem Host.
-      - ./backend:/src
       - staticfiles:/src/staticfiles
     expose:
       - "8000"
@@ -58,8 +52,6 @@ services:
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
         NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL}
-    expose:
-      - "3000"
     ports:
       - "3000:3000"
     container_name: frontend
@@ -91,8 +83,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      - ./backend:/src
 
   celery_flower:
     depends_on:
@@ -106,8 +96,6 @@ services:
       - .env
     ports:
       - "5555:5555"
-    volumes:
-      - ./backend:/src
     restart: unless-stopped
 
   celery_beat:
@@ -121,17 +109,7 @@ services:
     env_file:
       - .env
     command: celery -A config.celery:app beat -l info
-    volumes:
-      - ./backend:/src
     restart: unless-stopped
-
-  mailcatcher:
-    image: sj26/mailcatcher
-    container_name: mailcatcher
-    restart: unless-stopped
-    ports:
-      - "1025:1025"  # SMTP-Port
-      - "1080:1080"  # Webinterface
 
 volumes:
   postgres-db:

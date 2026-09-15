@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getApiBaseUrl } from "@/lib/api";
+import { getServerApiBaseUrl } from "@/lib/api";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -28,10 +28,10 @@ export async function GET(request: Request) {
 
 function resolveImageSource(source: string) {
   if (source.startsWith("/")) {
-    return `${getApiBaseUrl()}${source}`;
+    return `${getServerApiBaseUrl()}${source}`;
   }
 
-  const apiBaseUrl = getApiBaseUrl();
+  const apiBaseUrl = getServerApiBaseUrl();
   const sourceUrl = new URL(source);
   const apiUrl = new URL(apiBaseUrl);
 
