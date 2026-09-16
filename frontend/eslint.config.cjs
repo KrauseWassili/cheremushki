@@ -31,7 +31,8 @@ module.exports = [
       // start from recommended next + typescript rules, then project-specific overrides
       ...(nextRecommended.rules || {}),
       ...(tsRecommended.rules || {}),
-      "no-unused-vars": "warn",
+      "no-unused-vars": "off",
+      "@typescript-eslint/no-unused-vars": "error",
     },
   },
 ];

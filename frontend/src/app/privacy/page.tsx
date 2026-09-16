@@ -1,9 +1,5 @@
 "use client";
 
-import { useApp } from "@/providers/AppProvider";
-import { LogIn } from "lucide-react";
-import Link from "next/link";
-
 export default function PrivacyPage() {
   return (
     <main className="mx-auto w-full max-w-3xl py-4">
