@@ -74,6 +74,11 @@ export function MobileMenu({
 
         {isLoggedIn ? (
           <>
+            {!isProfileReady && (
+              <Link href="/profile" className={getMenuLinkClassName("/profile")}>
+                Заполнить профиль
+              </Link>
+            )}
             <Link href="/profile" className={getMenuLinkClassName("/profile")}>
               Профиль
             </Link>
