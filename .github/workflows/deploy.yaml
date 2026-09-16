@@ -2,7 +2,7 @@ name: CI and Deploy
 
 on:
   push:
-    branches: [main, develop]
+    branches: [ main, develop ]
   pull_request:
 
 concurrency:
@@ -41,9 +41,8 @@ jobs:
           --health-timeout 3s
           --health-retries 10
 
-    # Feste CI-Dummy-Werte. Django-Settings verlangen diese Keys beim Import.
     env:
-      SECRET_KEY: ci-only-not-secret
+      SECRET_KEY: ci-only-not-secret-do-not-use-in-prod
       DEBUG: "True"
       ALLOWED_HOSTS: localhost,127.0.0.1
       DATABASE_NAME: ci
@@ -100,7 +99,7 @@ jobs:
         run: npx eslint .
 
   deploy:
-    needs: [backend, frontend]
+    needs: [ backend, frontend ]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
