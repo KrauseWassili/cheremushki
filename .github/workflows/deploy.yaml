@@ -100,7 +100,7 @@ jobs:
 
   deploy:
     needs: [ backend, frontend ]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to Server
@@ -112,5 +112,5 @@ jobs:
           script: |
             set -euo pipefail
             cd "${{ vars.DEPLOY_PATH }}"
-            git pull https://x-access-token:${{ secrets.GH_TOKEN }}@github.com/${{ github.repository }}.git main
+            git pull https://x-access-token:${{ secrets.GH_TOKEN }}@github.com/${{ github.repository }}.git ${{ github.ref_name }}
             docker compose -f docker-compose.yml up -d --build
