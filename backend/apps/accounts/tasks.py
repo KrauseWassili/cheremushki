@@ -1,9 +1,8 @@
 from celery import shared_task
 from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
-
+from apps.accounts.services.email import send_email
 from apps.accounts.tokens import email_change_token_generator
-from django.core.mail import send_mail
 from django.template.loader import render_to_string
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
@@ -28,21 +27,25 @@ def send_activation_email(self, user_id: int):
     )
     activation_url = f"{frontend_url}/activate?uid={uid}&token={token}"
 
+    subject = "Активируй аккаунт"
+    message = (
+        (
+            f"Здравствуй, {user.first_name}!\n\n"
+            "Чтобы активировать аккаунт, перейди по ссылке:\n"
+            f"{activation_url}\n"
+        ),
+    )
     try:
         html_message = render_to_string(
             "emails/account_activation.html",
             {"user": user, "activation_url": activation_url},
         )
-        send_mail(
-            subject="Активируй аккаунт",
-            message=(
-                f"Здравствуй, {user.first_name}!\n\n"
-                "Чтобы активировать аккаунт, перейди по ссылке:\n"
-                f"{activation_url}\n"
-            ),
+
+        send_email(
+            subject=subject,
+            message=message,
             html_message=html_message,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
+            to=user.email,
         )
     except Exception as exc:
         raise self.retry(exc=exc)
@@ -69,14 +72,16 @@ def send_email_change_confirmation(self, user_id: int):
         "emails/email_change.html",
         {"user": user, "confirm_url": confirm_url, "new_email": user.pending_email},
     )
-    send_mail(
-        subject="Подтверди новую почту",
-        message=(
-            f"Здравствуй, {user.first_name}!\n\n"
-            "Чтобы подтвердить изменение email, перейди по ссылке:\n"
-            f"{confirm_url}\n"
-        ),
+
+    subject = "Подтверди новую почту"
+    message = (
+        f"Здравствуй, {user.first_name}!\n\n"
+        "Чтобы подтвердить изменение email, перейди по ссылке:\n"
+        f"{confirm_url}\n"
+    )
+    send_email(
+        subject=subject,
+        message=message,
         html_message=html_message,
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[user.pending_email],
+        to=user.pending_email,
     )

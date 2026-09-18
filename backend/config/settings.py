@@ -401,6 +401,13 @@ SIMPLE_JWT = {
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# --- E-Mail (Resend) ----------------------------------- #
+RESEND_API_KEY = env("RESEND_API_KEY", default="")
+RESEND_FROM_EMAIL = env("RESEND_FROM_EMAIL", default="")
+RECIPIENT_ADDRESS = env("RECIPIENT_ADDRESS", default="garmonia.eisner@gmail.com")
+RESEND_TIMEOUT = env.int("RESEND_TIMEOUT", default=15)
+RESEND_ENDPOINT = env("RESEND_ENDPOINT", default="https://api.resend.com/emails")
+
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="noreply@cheremushki.de")
 FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:3000")
 if DEBUG:
