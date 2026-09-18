@@ -883,16 +883,20 @@ class EmailChangeTaskTests(TestCase):
 
     def test_sends_mail_to_pending_address_with_confirm_link(self):
         request_email_change(self.user, "neu@example.com")
-        send_email_change_confirmation(self.user.pk)
 
-        self.assertEqual(len(mail.outbox), 1)
-        message = mail.outbox[0]
-        self.assertEqual(message.to, ["neu@example.com"])
+        with mock.patch("apps.accounts.tasks.send_email") as mocked_send_email:
+            send_email_change_confirmation(self.user.pk)
+
+        mocked_send_email.assert_called_once()
+        call_kwargs = mocked_send_email.call_args.kwargs
+        self.assertEqual(call_kwargs["to"], "neu@example.com")
         uid = urlsafe_base64_encode(force_bytes(self.user.pk))
-        bodies = [message.body, *(content for content, _mime in message.alternatives)]
-        self.assertTrue(any("/email-change/confirm" in body for body in bodies))
-        self.assertTrue(any(uid in body for body in bodies))
+        self.assertIn("/email-change/confirm", call_kwargs["message"])
+        self.assertIn(uid, call_kwargs["message"])
+        self.assertIn("/email-change/confirm", call_kwargs["html_message"])
+        self.assertIn(uid, call_kwargs["html_message"])
 
     def test_without_pending_sends_no_mail(self):
-        send_email_change_confirmation(self.user.pk)
-        self.assertEqual(len(mail.outbox), 0)
+        with mock.patch("apps.accounts.tasks.send_email") as mocked_send_email:
+            send_email_change_confirmation(self.user.pk)
+        mocked_send_email.assert_not_called()
