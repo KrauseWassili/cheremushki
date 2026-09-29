@@ -12,12 +12,13 @@ import logging
 
 from celery import shared_task
 from django.conf import settings
-from django.core.mail import send_mail
+
 from django.db import transaction
 from django.template.loader import render_to_string
 from django.utils import timezone
 
 from apps.accounts.models import CustomUser
+from apps.accounts.services.email import send_email, ResendError
 from apps.bot.models import TelegramInvite
 from apps.bot.services.telegram import create_single_use_invite_link
 from apps.profiles.models import MemberProfile
@@ -106,18 +107,26 @@ def _claim_invite(task, user: CustomUser) -> str | None:
         return invite.invite_link
 
 
-def _send_invite_mail(user: CustomUser, invite_link: str) -> None:
+def _send_invite_mail(self, user: CustomUser, invite_link: str) -> None:
     html_message = render_to_string(
         "emails/telegram_invite.html",
         {"user": user, "invite_link": invite_link},
     )
-    send_mail(
-        subject="Приглашение в Telegram-группу Черёмушки",
-        message=(
-            "Профиль заполнен — добро пожаловать! Вступай в закрытую "
-            f"Telegram-группу по ссылке: {invite_link}"
-        ),
-        html_message=html_message,
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[user.email],
-    )
+    subject = "Приглашение в Telegram-группу Черёмушки"
+    message = f"""Профиль заполнен — добро пожаловать! Вступай в закрытую 
+                Telegram-группу по ссылке: {invite_link}"""
+
+    try:
+        send_email(
+            subject=subject,
+            message=message,
+            html_message=html_message,
+            to=user.email,
+        )
+    except ResendError as exc:
+        if exc.retryable:
+            raise self.retry(exc=exc)
+        logger.error(
+            f"Permanent failure sending email change confirmation for user_id={user.id}: {exc}"
+        )
+        raise
