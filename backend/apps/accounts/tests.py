@@ -1,7 +1,6 @@
 from unittest import mock
 
 from django.contrib.auth.tokens import default_token_generator
-from django.core import mail
 from django.core.cache import cache
 from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -16,6 +15,7 @@ import io
 from PIL import Image
 
 from apps.accounts.models import CustomUser
+from apps.accounts.services.email import ResendError
 from apps.accounts.services.user_service.email_change import (
     EmailChangeError,
     confirm_email_change,
@@ -212,6 +212,9 @@ class InviteGateTests(TestCase):
             "apps.bot.tasks.email.create_single_use_invite_link",
             return_value="https://t.me/+abc123",
         ).start()
+        # Die Einladung geht über die Resend-API, nicht über Djangos
+        # Mail-Backend – mail.outbox bliebe also immer leer.
+        self.send_email = mock.patch("apps.bot.tasks.email.send_email").start()
         self.sync_post = mock.patch(
             "apps.bot.tasks.profile_post.sync_telegram_profile_post.delay"
         ).start()
@@ -252,7 +255,7 @@ class InviteGateTests(TestCase):
     def test_incomplete_profile_does_not_receive_an_invitation(self):
         self.patch_profile(city="Berlin", headline="Designerin")
         self.assertIsNone(self.invite().invite_sent_at)
-        self.assertEqual(len(mail.outbox), 0)
+        self.send_email.assert_not_called()
 
     def test_activation_alone_does_not_trigger_an_invitation(self):
         """Der Kern des Umbaus: Vorher ging die Mail hier raus."""
@@ -292,8 +295,11 @@ class InviteGateTests(TestCase):
         invite = self.invite()
         self.assertIsNotNone(invite.invite_sent_at)
         self.assertEqual(invite.invite_link, "https://t.me/+abc123")
-        self.assertEqual(len(mail.outbox), 1)
-        self.assertIn("Telegram", mail.outbox[0].subject)
+        self.send_email.assert_called_once()
+        call = self.send_email.call_args.kwargs
+        self.assertEqual(call["to"], self.user.email)
+        self.assertIn("Telegram", call["subject"])
+        self.assertIn("https://t.me/+abc123", call["message"])
 
     def test_avatar_upload_as_the_last_required_field_cancels_the_invitation(self):
         self.patch_profile(**COMPLETE_PROFILE_PAYLOAD)
@@ -307,30 +313,30 @@ class InviteGateTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIsNotNone(self.invite().invite_sent_at)
-        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(self.send_email.call_count, 1)
 
     def test_save_second_does_not_trigger_a_second_invitation(self):
         self.complete_profile()
         self.patch_profile(bio="erste Fassung")
-        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(self.send_email.call_count, 1)
 
         self.patch_profile(bio="zweite Fassung")
         self.patch_profile(headline="neue Headline")
 
-        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(self.send_email.call_count, 1)
         self.assertEqual(self.create_link.call_count, 1)
 
     def test_task_is_idempotent_against_double_calls(self):
         """
-        Schutz gegen Retries und parallele Tasks: invite_sent_at wird unter
-        select_for_update gesetzt, bevor die Mail rausgeht.
+        Schutz gegen Retries: Nach erfolgreichem Versand steht invite_sent_at,
+        jeder weitere Aufruf bricht daran ab.
         """
         self.complete_profile()
         send_telegram_invite_email(self.user.pk)
         send_telegram_invite_email(self.user.pk)
         send_telegram_invite_email(self.user.pk)
 
-        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(self.send_email.call_count, 1)
         self.assertEqual(self.create_link.call_count, 1)
 
     def test_inactive_account_does_not_receive_an_invitation(self):
@@ -340,7 +346,42 @@ class InviteGateTests(TestCase):
         send_telegram_invite_email(self.user.pk)
 
         self.assertIsNone(self.invite().invite_sent_at)
-        self.assertEqual(len(mail.outbox), 0)
+        self.send_email.assert_not_called()
+
+    # --- Fehlschlag beim Versand -----------------------------------------
+
+    def test_failed_delivery_leaves_the_invitation_resendable(self):
+        """
+        Der Kern der Versandreihenfolge: Scheitert Resend, bleibt
+        invite_sent_at leer – sonst wäre die Einladung dauerhaft verloren.
+        """
+        self.complete_profile()
+        self.send_email.side_effect = ResendError("Resend down", retryable=False)
+
+        with self.assertRaises(ResendError):
+            send_telegram_invite_email(self.user.pk)
+
+        invite = self.invite()
+        self.assertIsNone(invite.invite_sent_at)
+        # Der Link ist schon erzeugt und bleibt es – ein zweiter Anlauf darf
+        # keinen weiteren Zugang zur Gruppe anlegen.
+        self.assertEqual(invite.invite_link, "https://t.me/+abc123")
+
+    def test_second_attempt_after_a_failed_delivery_reuses_the_same_link(self):
+        self.complete_profile()
+        self.send_email.side_effect = ResendError("Resend down", retryable=False)
+        with self.assertRaises(ResendError):
+            send_telegram_invite_email(self.user.pk)
+
+        self.send_email.side_effect = None
+        send_telegram_invite_email(self.user.pk)
+
+        self.assertIsNotNone(self.invite().invite_sent_at)
+        self.assertEqual(self.create_link.call_count, 1)
+        self.assertEqual(
+            self.send_email.call_args.kwargs["message"].count("https://t.me/+abc123"),
+            1,
+        )
 
 
 def _one_pixel_png() -> SimpleUploadedFile:
@@ -900,3 +941,58 @@ class EmailChangeTaskTests(TestCase):
         with mock.patch("apps.accounts.tasks.send_email") as mocked_send_email:
             send_email_change_confirmation(self.user.pk)
         mocked_send_email.assert_not_called()
+
+
+@override_settings(CACHES=LOCMEM_CACHE)
+class PasswordResetMailTests(TestCase):
+    """
+    Der Reset-Link geht synchron im Request über Resend raus.
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.user = CustomUser.objects.create_user(
+            email="anna@example.com",
+            password=VALID_PASSWORD,
+            first_name="Anna",
+            last_name="B",
+            is_active=True,
+        )
+        self.client = APIClient()
+
+    def request_reset(self, email: str):
+        return self.client.post(
+            "/api/v1/accounts/password/reset/", {"email": email}, format="json"
+        )
+
+    def test_known_address_receives_a_reset_link(self):
+        with mock.patch("apps.accounts.views.send_email") as send_email:
+            response = self.request_reset(self.user.email)
+
+        self.assertEqual(response.status_code, 200)
+        send_email.assert_called_once()
+        call = send_email.call_args.kwargs
+        self.assertEqual(call["to"], self.user.email)
+        self.assertIn("/password-reset/confirm?uid=", call["message"])
+
+    def test_unknown_address_sends_nothing(self):
+        with mock.patch("apps.accounts.views.send_email") as send_email:
+            response = self.request_reset("niemand@example.com")
+
+        self.assertEqual(response.status_code, 200)
+        send_email.assert_not_called()
+
+    def test_delivery_failure_stays_indistinguishable_from_an_unknown_address(self):
+        """
+        Ein durchgereichter Resend-Fehler würde nur für existierende Konten
+        auftreten und die Adresse damit verifizierbar machen.
+        """
+        with mock.patch(
+            "apps.accounts.views.send_email",
+            side_effect=ResendError("Resend down", retryable=False),
+        ):
+            failing = self.request_reset(self.user.email)
+        unknown = self.request_reset("niemand@example.com")
+
+        self.assertEqual(failing.status_code, unknown.status_code)
+        self.assertEqual(failing.data, unknown.data)

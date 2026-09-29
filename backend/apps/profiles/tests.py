@@ -10,6 +10,7 @@ from PIL import Image
 from rest_framework.test import APIClient
 
 from apps.accounts.models import CustomUser
+from apps.accounts.services.email import ResendError
 from apps.bot.models import TelegramInvite
 
 from .hashtags import InvalidHashtag, normalize_hashtag, parse_hashtag
@@ -17,10 +18,13 @@ from .models import (
     DIRECTORY_REQUIRED_FIELDS,
     RESERVED_SLUGS,
     ContactMode,
+    ContactRequest,
+    ContactRequestStatus,
     MemberProfile,
     ProfileTag,
 )
 from .serializers import MAX_PROFILE_TAGS
+from .tasks import send_contact_request_email
 from .services import MAX_SUGGESTION_LIMIT
 from .tag_vocabulary import INITIAL_PROFILE_TAGS
 from .telegram import (
@@ -914,3 +918,53 @@ class SeedProfileTagsCommandTests(TestCase):
         tag = ProfileTag.objects.get(name="it")
         self.assertEqual(tag.label, "Eigenes Label")
         self.assertFalse(tag.is_active)
+
+
+class ContactRequestMailTests(TestCase):
+    """
+    Der Versand läuft über die Resend-API. Der Status der Anfrage muss den
+    Ausgang des Versands beschreiben – er ist das Einzige, woran im Admin
+    später erkennbar ist, ob die Mail draußen war.
+    """
+
+    def setUp(self):
+        self.sender = CustomUser.objects.create_user(
+            email="anna@example.com",
+            password="Str0ng!Passwort",
+            first_name="Anna",
+            last_name="B",
+            is_active=True,
+        )
+        self.receiver = CustomUser.objects.create_user(
+            email="boris@example.com",
+            password="Str0ng!Passwort",
+            first_name="Boris",
+            last_name="C",
+            is_active=True,
+        )
+        profile = MemberProfile(user=self.receiver, contact_mode=ContactMode.REQUEST)
+        profile.ensure_unique_slug()
+        profile.save()
+        self.contact = ContactRequest.objects.create(
+            from_user=self.sender, to_profile=profile, message="Hallo!"
+        )
+
+    def test_successful_delivery_marks_the_request_as_sent(self):
+        with mock.patch("apps.profiles.tasks.send_email") as send_email:
+            send_contact_request_email(self.contact.pk)
+
+        send_email.assert_called_once()
+        self.assertEqual(send_email.call_args.kwargs["to"], self.receiver.email)
+        self.contact.refresh_from_db()
+        self.assertEqual(self.contact.status, ContactRequestStatus.SENT)
+
+    def test_permanent_failure_marks_the_request_as_failed(self):
+        with mock.patch(
+            "apps.profiles.tasks.send_email",
+            side_effect=ResendError("Resend down", retryable=False),
+        ):
+            with self.assertRaises(ResendError):
+                send_contact_request_email(self.contact.pk)
+
+        self.contact.refresh_from_db()
+        self.assertEqual(self.contact.status, ContactRequestStatus.FAILED)

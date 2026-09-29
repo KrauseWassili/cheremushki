@@ -7,10 +7,12 @@ import requests
 from django.core.cache import cache
 from django.core.checks import messages as checks_messages
 from django.db import DatabaseError
-from django.test import SimpleTestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory
 
 from apps.accounts.models import CustomUser
+from apps.accounts.services.email import ResendError
 from apps.bot import checks as bot_checks
 from apps.bot.exceptions import TelegramAPIError, TelegramTransportError
 from apps.bot.models import TelegramInvite
@@ -22,6 +24,7 @@ from apps.bot.services.profile_card import (
     build_profile_keyboard,
 )
 from apps.bot.tasks import telegram_user as telegram_user_tasks
+from apps.bot.tasks.profile_post import send_profile_completion_reminder
 from apps.profiles.models import ContactMode, MemberProfile
 
 FAKE_TOKEN = "7123456789:AAHmocktokenmocktokenmocktoken12345"
@@ -578,3 +581,53 @@ class ProfileCaptionHeadlineTests(SimpleTestCase):
         self.assertEqual(italic, "<i>Участник · #berlin</i>")
         self.assertNotIn("ПРОФЕССИЯ", italic)
         self.assertNotIn("ПРОФЕССИЯ", caption)
+
+
+class ProfileReminderMailTests(TestCase):
+    """
+    Der Reminder läuft über Resend. Entscheidend ist der Zähler: Es gibt nur
+    zwei Mahnungen pro Mitglied, ein Fehlschlag darf keine davon verbrauchen.
+    """
+
+    def setUp(self):
+        self.user = CustomUser.objects.create_user(
+            email="anna@example.com",
+            password="Str0ng!Passwort",
+            first_name="Anna",
+            last_name="B",
+            is_active=True,
+        )
+        # Profil bleibt leer – genau das ist der Anlass für die Mahnung.
+        MemberProfile.objects.create(user=self.user, slug="anna-b")
+        self.invite = TelegramInvite.objects.create(user=self.user)
+
+    def test_successful_reminder_counts_up(self):
+        with mock.patch("apps.bot.tasks.profile_post.send_email") as send_email:
+            send_profile_completion_reminder(self.user.pk)
+
+        send_email.assert_called_once()
+        self.assertEqual(send_email.call_args.kwargs["to"], self.user.email)
+        self.invite.refresh_from_db()
+        self.assertEqual(self.invite.reminder_count, 1)
+        self.assertIsNotNone(self.invite.last_reminder_at)
+
+    def test_failed_reminder_does_not_consume_an_attempt(self):
+        with mock.patch(
+            "apps.bot.tasks.profile_post.send_email",
+            side_effect=ResendError("Resend down", retryable=False),
+        ):
+            with self.assertRaises(ResendError):
+                send_profile_completion_reminder(self.user.pk)
+
+        self.invite.refresh_from_db()
+        self.assertEqual(self.invite.reminder_count, 0)
+        self.assertIsNone(self.invite.last_reminder_at)
+
+    def test_sent_invitation_stops_the_reminder(self):
+        self.invite.invite_sent_at = timezone.now()
+        self.invite.save(update_fields=["invite_sent_at"])
+
+        with mock.patch("apps.bot.tasks.profile_post.send_email") as send_email:
+            send_profile_completion_reminder(self.user.pk)
+
+        send_email.assert_not_called()
