@@ -3,11 +3,11 @@ import logging
 from celery import shared_task
 from django.conf import settings
 from django.core.cache import cache
-from django.core.mail import send_mail
 from django.template.loader import render_to_string
 from django.utils import timezone
 
 from apps.accounts.models import CustomUser
+from apps.accounts.services.email import ResendError, send_email
 from apps.bot.exceptions import TelegramAPIError
 from apps.bot.models import TelegramInvite
 from apps.bot.services.telegram import post_or_update_profile_card
@@ -144,21 +144,28 @@ def send_profile_completion_reminder(self, user_id: int):
     )
 
     # --- Reminder nur per E-Mail
+    html_message = render_to_string(
+        "emails/profile_reminder.html",
+        {"user": user, "profile_url": profile_url},
+    )
+
     try:
-        html_message = render_to_string(
-            "emails/profile_reminder.html",
-            {"user": user, "profile_url": profile_url},
-        )
-        send_mail(
+        send_email(
             subject="Дополни свой профиль в клубе",
             message=text,
             html_message=html_message,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
+            to=user.email,
         )
-    except Exception as exc:
-        raise self.retry(exc=exc)
-
-    invite.reminder_count += 1
-    invite.last_reminder_at = timezone.now()
-    invite.save(update_fields=["reminder_count", "last_reminder_at"])
+    except ResendError as exc:
+        if exc.retryable:
+            raise self.retry(exc=exc)
+        logger.error(
+            "Profil-Reminder für user=%s dauerhaft nicht zustellbar: %s", user_id, exc
+        )
+        raise
+    else:
+        # Erst zählen, wenn die Mahnung wirklich draußen ist – sonst
+        # verbraucht ein Fehlschlag einen der zwei Versuche.
+        invite.reminder_count += 1
+        invite.last_reminder_at = timezone.now()
+        invite.save(update_fields=["reminder_count", "last_reminder_at"])

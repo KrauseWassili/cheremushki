@@ -1,3 +1,5 @@
+import logging
+
 from adrf import mixins, viewsets
 from adrf.mixins import Response, get_data
 from asgiref.sync import sync_to_async
@@ -5,7 +7,6 @@ from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import default_token_generator
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.core.mail import send_mail
 from django.db import transaction
 from django.template.loader import render_to_string
 from django.utils.encoding import force_bytes, force_str
@@ -24,6 +25,7 @@ from rest_framework_simplejwt.token_blacklist.models import (
     OutstandingToken,
 )
 
+from apps.accounts.services.email import ResendError, send_email
 from apps.bot.tasks.account import purge_telegram_presence
 from apps.bot.tasks.profile_post import (
     PROFILE_REMINDER_DELAY_SECONDS,
@@ -50,6 +52,8 @@ from .services.user_service.email_change import (
     request_email_change,
 )
 from .tasks import send_activation_email, send_email_change_confirmation
+
+logger = logging.getLogger(__name__)
 
 
 class LoginViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
@@ -326,13 +330,21 @@ class PasswordViewSet(viewsets.GenericViewSet):
                 "emails/password_reset.html",
                 {"user": user, "reset_url": reset_url},
             )
-            send_mail(
-                subject="Passwort zurücksetzen",
-                message=f"Passwort zurücksetzen: {reset_url}",
-                html_message=html_message,
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[user.email],
-            )
+            try:
+                send_email(
+                    subject="Passwort zurücksetzen",
+                    message=f"Passwort zurücksetzen: {reset_url}",
+                    html_message=html_message,
+                    to=user.email,
+                )
+            except ResendError as exc:
+                # Die Antwort ist für bekannte und unbekannte Adressen
+                # dieselbe. Ein durchgereichter Fehler würde genau diesen
+                # Unterschied verraten und die Adressen verifizierbar machen –
+                # der Fehlschlag gehört deshalb ins Log, nicht in die Antwort.
+                logger.error(
+                    "Passwort-Reset für user=%s nicht zustellbar: %s", user.pk, exc
+                )
 
         await sync_to_async(_send_reset_mail)()
         return Response(detail, status=status.HTTP_200_OK)
