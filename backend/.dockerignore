@@ -1,0 +1,28 @@
+# Laufzeitdaten: kommen aus den benannten Volumes, nicht ins Image (Avatare
+# wären sonst personenbezogene Daten in einem Image-Layer).
+media/
+staticfiles/
+celerybeat-schedule*
+celerybeat.pid
+
+# Lokale Umgebung und Secrets. .env liegt im Repo-Root, aber backend/.env*
+# darf auch versehentlich nie ins Image.
+.venv/
+.env*
+.python-version
+docker-compose.env
+
+# Caches und Logs. tests.py bleibt drin – das sind App-Module, die
+# manage.py test im Container braucht.
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.log
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.git
+.idea/
+.vscode/

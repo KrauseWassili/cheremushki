@@ -6,15 +6,23 @@
 services:
   db:
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
 
   backend:
+    # runserver mit Hot Reload statt des Produktions-Starts (daphne).
+    command: bash ./scripts/run_backend_local.sh
+    # !override statt Ergänzung: Compose hängt Port-Listen sonst an die der
+    # Basisdatei an. Lokal immer nur 127.0.0.1, unabhängig von PUBLISH_IP.
+    ports: !override
+      - "127.0.0.1:8010:8000"
     volumes:
-      # Live-Code + Hot Reload für lokale Entwicklung. Compose ersetzt
-      # Volume-Listen aus Override-Dateien komplett statt sie zusammenzuführen,
-      # daher muss staticfiles hier erneut aufgeführt werden.
+      # Live-Code + Hot Reload für lokale Entwicklung. Compose führt
+      # Volume-Listen über den Container-Pfad zusammen: Ohne den Eintrag für
+      # /src/media würde das benannte media-Volume aus docker-compose.yml das
+      # Host-Verzeichnis backend/media überdecken.
       - ./backend:/src
-      - staticfiles:/src/staticfiles
+      - static:/src/staticfiles
+      - ./backend/media:/src/media
 
   frontend:
     build:
@@ -30,12 +38,15 @@ services:
       # sonst bleibt der alte node_modules-Stand über Rebuilds hinweg bestehen.
       - /frontend/node_modules
       - /frontend/.next
-    ports:
-      - "3000:3000"
+    ports: !override
+      - "127.0.0.1:3000:3000"
 
   worker:
     volumes:
       - ./backend:/src
+      # Gleicher Pfad wie beim backend, siehe Kommentar dort; :ro wie
+      # in docker-compose.yml.
+      - ./backend/media:/src/media:ro
 
   celery_flower:
     volumes:
@@ -50,5 +61,5 @@ services:
     container_name: mailcatcher
     restart: unless-stopped
     ports:
-      - "1025:1025"  # SMTP-Port
-      - "1080:1080"  # Webinterface
+      - "127.0.0.1:1025:1025"  # SMTP-Port
+      - "127.0.0.1:1080:1080"  # Webinterface

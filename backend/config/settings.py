@@ -8,7 +8,6 @@ import environ
 from celery.schedules import crontab
 from corsheaders.defaults import default_methods
 from django.core.exceptions import ImproperlyConfigured
-from django.templatetags.static import static
 
 env = environ.Env(
     # set casting, default value
@@ -53,6 +52,10 @@ THIRD_PARTY_APPS: Tuple[str, ...] = (
     "corsheaders",
     "django_filters",
     "drf_spectacular",
+    # Nur für die Übersetzungen: Django lädt Sprachkataloge ausschließlich aus
+    # INSTALLED_APPS, sonst blieben Login-Fehler wie "No active account …"
+    # englisch. Die App hat keine Modelle.
+    "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
     "taggit",
 )
@@ -64,9 +67,14 @@ AUTH_USER_MODEL = "accounts.CustomUser"
 
 MIDDLEWARE: List[str] = [
     "django.middleware.security.SecurityMiddleware",
+    # Direkt nach SecurityMiddleware (WhiteNoise-Vorgabe): Der geteilte Nginx
+    # leitet /static/ nur an diesen Container weiter, statt die Dateien selbst
+    # auszuliefern – ohne WhiteNoise hätte der Admin bei DEBUG=False kein CSS.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "config.middleware.admin_language_middleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
@@ -104,28 +112,29 @@ DATABASES = {
     }
 }
 
+# Vor UNFOLD gelesen: "Zur Website" im Admin soll auf das echte Frontend
+# zeigen, nicht auf localhost.
+FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:3000")
+
+# Ohne SITE_LOGO und LOGIN-Bild: Die früher referenzierten
+# static/image/logo.webp und home-header.webp gibt es nicht, der Admin zeigte
+# kaputte Bilder. Unfold fällt dann auf SITE_SYMBOL bzw. ein Login ohne Bild
+# zurück.
 UNFOLD = {
     "SITE_TITLE": "Webseite Verwaltung",
     "SITE_DROPDOWN": [
         {
             "icon": "diamond",
-            "title": "Cheremushki Admin",
-            "link": "http://localhost:3000",
+            "title": "Cheremushki Website",
+            "link": FRONTEND_URL,
         },
     ],
-    "SITE_URL": "http://localhost:3000",
-    "SITE_LOGO": {
-        "light": lambda request: static("image/logo.webp"),
-        "dark": lambda request: static("image/logo.webp"),
-    },
+    "SITE_URL": FRONTEND_URL,
     "SITE_SYMBOL": "speed",
     "SHOW_HISTORY": True,
     "SHOW_VIEW_ON_SITE": True,
     "SHOW_BACK_BUTTON": False,
     "THEME": "light",
-    "LOGIN": {
-        "image": lambda request: static("image/home-header.webp"),
-    },
     "BORDER_RADIUS": "6px",
     "COLORS": {
         # Sand (Sekundär) – frontend --color-sand-*
@@ -309,7 +318,17 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/4.2/topics/i18n/
 
-LANGUAGE_CODE = "de-DE"
+# Russisch, weil die Oberfläche russisch ist: Djangos und DRFs eingebaute
+# Meldungen (Pflichtfeld, ungültige E-Mail, Passwort-Validatoren, Throttling)
+# landen direkt im UI. Der Admin bleibt deutsch, siehe
+# config.middleware.admin_language_middleware.
+LANGUAGE_CODE = "ru"
+
+# Projektkatalog vor allen App-Katalogen: Die Upstream-Übersetzungen von
+# Django/DRF/SimpleJWT siezen ("Убедитесь, что …"), die Oberfläche duzt.
+# backend/locale/ru/LC_MESSAGES/django.po überschreibt die häufigsten
+# Meldungen; die .mo ist committet, im Image gibt es kein gettext.
+LOCALE_PATHS = [BASE_DIR / "locale"]
 
 TIME_ZONE = "UTC"
 
@@ -322,6 +341,14 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / env("DJANGO_STATIC_ROOT", default="staticfiles")
+# Ohne Manifest: Die Manifest-Variante bricht jeden Request mit ValueError ab,
+# sobald ein {% static %}-Pfad fehlt oder collectstatic nicht gelaufen ist
+# (betrifft auch den Testlauf). Für Admin-Assets und zwei Logos reicht das
+# komprimierte Ausliefern ohne Cache-Busting.
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedStaticFilesStorage"},
+}
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / env("DJANGO_MEDIA_ROOT", default="media")
 
@@ -357,6 +384,8 @@ REST_FRAMEWORK = {
         "sign_up": "5/hour",
         # Authentifizierte Kontoaktionen: Schlüssel ist die User-ID.
         "account": "20/hour",
+        # Avatar-Upload (Bilddekodierung ist CPU- und speicherintensiv).
+        "avatar": "20/hour",
     },
     # Anzahl vertrauenswürdiger Proxys vor der App. 0 = REMOTE_ADDR benutzen
     # (lokal, ohne Proxy), hinter Nginx auf 1 setzen, dann nimmt DRF den
@@ -408,7 +437,6 @@ RESEND_TIMEOUT = env.int("RESEND_TIMEOUT", default=15)
 RESEND_ENDPOINT = env("RESEND_ENDPOINT", default="https://api.resend.com/emails")
 
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="noreply@cheremushki.de")
-FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:3000")
 if DEBUG:
     EMAIL_HOST = env("EMAIL_HOST", default="mailcatcher")
     EMAIL_HOST_USER = ""

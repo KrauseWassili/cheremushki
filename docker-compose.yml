@@ -1,5 +1,16 @@
 name: Cheremushki
 
+# Veröffentlichte Ports binden an PUBLISH_IP statt an alle Interfaces: Der
+# geteilte Nginx (stock_nginx, anderes Repo) kommt aus einem Container über
+# host.docker.internal = Gateway der Docker-Bridge (meist docker0,
+# 172.17.0.1). 127.0.0.1 wäre von dort aus nicht erreichbar, 0.0.0.0 dagegen
+# öffentlich – und wer direkt auf 8010 kommt, setzt X-Forwarded-For/-Proto
+# selbst und umgeht damit das Login-Throttling (NUM_PROXIES=1).
+# Ohne Default: Fehlt PUBLISH_IP, bricht compose mit Fehlermeldung ab, statt
+# still auf eine geratene Bridge-IP zu binden. Lokal: PUBLISH_IP=127.0.0.1 in
+# .env (siehe .env.example) – auch für die Dev-Override-Datei nötig, denn
+# compose interpoliert die Basisdatei vor dem Zusammenführen.
+
 services:
   db:
     image: postgres:17-alpine
@@ -31,17 +42,38 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     volumes:
-      - staticfiles:/src/staticfiles
+      # Volume "static" statt des früheren "staticfiles": Das alte gehört
+      # root (damals lief der Container als root), der Container läuft jetzt
+      # als app. Ein neues Volume übernimmt den Eigentümer aus dem Image.
+      # Der Inhalt ist per collectstatic jederzeit neu erzeugbar.
+      - static:/src/staticfiles
+      # Hochgeladene Avatare. Ohne Volume lägen sie im Container-Dateisystem
+      # und wären nach jedem Deploy (up -d --build) weg.
+      - media:/src/media
     expose:
       - "8000"
-    # Remove for production deployment, only for local development
     ports:
       # 8010, nicht 8000: Der Host läuft parallel stock_scanner_app, dessen
       # eigener Backend-Container bereits 8000:8000 belegt.
-      - "8010:8000"
+      - "${PUBLISH_IP:?PUBLISH_IP in .env setzen}:8010:8000"
+    # Nur "nimmt daphne Requests an?" – /healthz fasst weder Postgres noch
+    # Redis an, ein DB-Neustart macht den Webdienst also nicht "unhealthy".
+    # Host-Header = erster Eintrag aus ALLOWED_HOSTS, sonst antwortet Django
+    # mit 400 (DisallowedHost). Ausnahmen, die kein gültiger Host-Header sind:
+    # "*" (bzw. leer) -> localhost, das "*" ohnehin erlaubt; ".example.com"
+    # (Subdomain-Wildcard) -> health.example.com. start_period deckt check,
+    # migrate, Avatar-Cleanup und collectstatic vor dem daphne-Start ab.
+    healthcheck:
+      test: [ "CMD-SHELL", "host=$${ALLOWED_HOSTS%%,*}; case \"$$host\" in ''|'*') host=localhost ;; .*) host=\"health$$host\" ;; esac; curl -fsS -o /dev/null -H \"Host: $$host\" http://127.0.0.1:8000/healthz || exit 1" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
     container_name: backend
     env_file: .env
-    command: bash ./scripts/run_backend_local.sh
+    # Produktion: migrate + collectstatic + daphne. Die Dev-Override-Datei setzt
+    # das auf run_backend_local.sh (runserver mit Hot Reload) zurück.
+    command: bash ./scripts/run_backend_prod.sh
     restart: unless-stopped
 
   frontend:
@@ -55,7 +87,7 @@ services:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
         NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL}
     ports:
-      - "3000:3000"
+      - "${PUBLISH_IP:?PUBLISH_IP in .env setzen}:3000:3000"
     container_name: frontend
     env_file: .env
     restart: unless-stopped
@@ -78,6 +110,13 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     command: celery -A config.celery:app worker -Q generation,default -l info
+    volumes:
+      # Lesend: resolve_avatar_bytes() schickt die Avatar-Datei mit der
+      # Telegram-Profilkarte. Ohne dasselbe Volume sähe der Worker die
+      # Uploads des Backends nicht und postete nur Platzhalterbilder.
+      # :ro, weil kein Task Media schreibt oder löscht – Upload, Austausch
+      # und Löschung der Avatare laufen alle im backend-Request.
+      - media:/src/media:ro
     env_file:
       - .env
     depends_on:
@@ -99,7 +138,12 @@ services:
     ports:
       # 5556, nicht 5555: stock_scanner_app hat einen eigenen (aktuell
       # inaktiven) celery_flower-Dienst auf 5555 – Kollision vorbeugen.
-      - "5556:5555"
+      #
+      # Nur 127.0.0.1: Flower hat keine Authentifizierung, zeigt Task-
+      # Argumente (personenbezogene Daten) und kann Worker steuern. Zugriff
+      # vom eigenen Rechner per SSH-Tunnel:
+      #   ssh -L 5556:127.0.0.1:5556 <user>@<server>  ->  http://localhost:5556
+      - "127.0.0.1:5556:5555"
     restart: unless-stopped
 
   celery_beat:
@@ -112,9 +156,14 @@ services:
       dockerfile: Dockerfile
     env_file:
       - .env
-    command: celery -A config.celery:app beat -l info
+    # Schedule-Datei nach /tmp: Der Container läuft als app, und im
+    # Dev-Setup ist /src der Bind-Mount des Repos – dort soll keine
+    # celerybeat-schedule entstehen. Der Inhalt ist flüchtig (nur
+    # Intervall-Jobs), ein Verlust beim Neustart ist folgenlos.
+    command: celery -A config.celery:app beat -l info --schedule /tmp/celerybeat-schedule
     restart: unless-stopped
 
 volumes:
   postgres-db:
-  staticfiles:
+  static:
+  media:
