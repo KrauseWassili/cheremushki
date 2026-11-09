@@ -82,7 +82,7 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                 err instanceof ApiError
                     ? [...err.generalErrors, ...Object.values(err.fieldErrors).flat()].join(" ") ||
                     err.message
-                    : "Не удалось войти. Попробуйте ещё раз.";
+                    : "Не удалось войти. Попробуй ещё раз.";
             setLoginError(message);
         } finally {
             setIsSubmitting(false);
@@ -116,7 +116,7 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                 });
             } else {
                 setRegisterErrors({
-                    general: ["Не удалось зарегистрироваться. Попробуйте ещё раз."],
+                    general: ["Не удалось зарегистрироваться. Попробуй ещё раз."],
                     fields: {},
                 });
             }
@@ -234,7 +234,7 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                                     onClick={() => switchMode("reset-password")}
                                     className="text-accent hover:underline"
                                 >
-                                    Забыли пароль?
+                                    Не помнишь пароль?
                                 </button>
                             </div>
 
@@ -256,7 +256,7 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                                 {isSubmitting ? (
                                     <>
                                         <Loader2 size={16} className="animate-spin"/>
-                                        Подождите…
+                                        Подожди…
                                     </>
                                 ) : (
                                     "Войти"
@@ -279,7 +279,7 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                                     Сброс пароля
                                 </h3>
                                 <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                                    Укажите почту аккаунта, и мы отправим ссылку для восстановления.
+                                    Укажи почту аккаунта, и мы отправим ссылку для восстановления.
                                 </p>
                             </div>
 
@@ -330,7 +330,7 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                                 {isSubmitting ? (
                                     <>
                                         <Loader2 size={16} className="animate-spin"/>
-                                        Подождите…
+                                        Подожди…
                                     </>
                                 ) : (
                                     "Отправить ссылку"
@@ -338,7 +338,7 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                             </Button>
 
                             <p className="text-center text-muted-foreground text-xs">
-                                Вспомнили пароль?{" "}
+                                Помнишь пароль?{" "}
                                 <button
                                     type="button"
                                     onClick={() => switchMode("login")}
@@ -467,7 +467,7 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                             </div>
                             <div className="flex items-center justify-between text-xs">
                                 <p className="text-muted-foreground text-xs text-center">
-                                    Регистрируясь, вы соглашаетесь с{" "}
+                                    Регистрируясь, ты соглашаешься с{" "}
                                     <a href="/rules" className="text-accent hover:underline">правилами</a>{" "}
                                     и{" "}
                                     <a href="/privacy" className="text-accent hover:underline">политикой конфиденциальности</a>.
@@ -492,7 +492,7 @@ export function LoginModal({initialMode = "login", onClose, onLogin, onRegister}
                                 {isSubmitting ? (
                                     <>
                                         <Loader2 size={16} className="animate-spin"/>
-                                        Подождите…
+                                        Подожди…
                                     </>
                                 ) : (
                                     "Создать аккаунт"

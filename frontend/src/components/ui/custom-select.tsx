@@ -21,7 +21,7 @@ type CustomSelectProps = {
 export function CustomSelect({
   value,
   options,
-  placeholder = "Выберите значение",
+  placeholder = "Выбери значение",
   onChange,
   id,
   disabled = false,

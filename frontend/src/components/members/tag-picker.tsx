@@ -45,7 +45,7 @@ export function TagPicker({
   value,
   onChange,
   label = "Ключевые слова",
-  description = "Выберите до 10 тегов из словаря. Они помогут найти вас в каталоге и превратятся в хештеги в Telegram.",
+  description = "Выбери до 10 тегов из словаря. Они помогут найти тебя в каталоге и превратятся в хештеги в Telegram.",
 }: TagPickerProps) {
   const inputId = useId();
   const listboxId = `${inputId}-suggestions`;
@@ -120,7 +120,7 @@ export function TagPicker({
         })
         .catch(() => {
           if (cancelled) return;
-          setError("Не удалось загрузить словарь тегов. Попробуйте еще раз.");
+          setError("Не удалось загрузить словарь тегов. Попробуй ещё раз.");
         })
         .finally(() => {
           if (!cancelled) {
@@ -254,7 +254,7 @@ export function TagPicker({
               placeholder={
                 selectedTags.length > 0
                   ? "Добавить тег"
-                  : "Начните вводить или выберите из списка"
+                  : "Начни вводить или выбери из списка"
               }
               role="combobox"
               aria-expanded={isOpen}
@@ -290,7 +290,7 @@ export function TagPicker({
 
             {!isLoading && !error && groupedOptions.length === 0 && (
               <p className="px-3 py-2 text-sm text-muted-foreground">
-                Такого тега нет в словаре. Выберите один из предложенных вариантов.
+                Такого тега нет в словаре. Выбери один из предложенных вариантов.
               </p>
             )}
 
@@ -430,7 +430,7 @@ function getHelperText({
     return "Свободный ввод отключен: можно выбрать только тег из словаря.";
   }
   if (selectedCount === 0) {
-    return "Откройте список или начните вводить название сферы, навыка или интереса.";
+    return "Открой список или начни вводить название сферы, навыка или интереса.";
   }
   return "Enter выбирает подсвеченный тег, Backspace удаляет последний выбранный.";
 }

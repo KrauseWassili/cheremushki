@@ -70,13 +70,13 @@ function PasswordResetConfirmContent() {
         <div>
           <h1 className="text-2xl font-black">Сброс пароля</h1>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            Введите новый пароль для аккаунта.
+            Введи новый пароль для аккаунта.
           </p>
         </div>
 
         {!hasResetLink && (
           <p className="mt-5 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            В ссылке не хватает данных для сброса пароля. Запросите письмо ещё раз.
+            В ссылке не хватает данных для сброса пароля. Запроси письмо ещё раз.
           </p>
         )}
 
@@ -99,7 +99,7 @@ function PasswordResetConfirmContent() {
           </label>
 
           <label className="grid gap-2">
-            <span className="text-sm font-bold">Повторите новый пароль</span>
+            <span className="text-sm font-bold">Повтори новый пароль</span>
             <input
               type="password"
               value={passwordConfirm}

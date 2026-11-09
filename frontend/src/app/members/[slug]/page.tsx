@@ -64,7 +64,7 @@ export default function MemberPage() {
     return (
       <main className="mx-auto w-full max-w-lg py-16 text-center">
         <p className="text-muted-foreground">
-          Войдите, чтобы открыть профиль участника.
+          Войди, чтобы открыть профиль участника.
         </p>
         <Button
           type="button"

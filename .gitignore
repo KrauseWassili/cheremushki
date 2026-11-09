@@ -65,6 +65,9 @@ test-reports
 # Translations
 *.mo
 *.pot
+# Projektkatalog: Die .mo wird zur Laufzeit gebraucht und ist committet,
+# weil das Image kein gettext/msgfmt enthält.
+!backend/locale/**/*.mo
 
 # Media dir and collected statics
 #backend/media/*

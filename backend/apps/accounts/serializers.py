@@ -56,14 +56,12 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     def validate_email(self, value):
         if CustomUser.objects.filter(email__iexact=value).exists():
-            raise ValidationError("Diese E-Mail ist bereits registriert.")
+            raise ValidationError("Эта почта уже зарегистрирована.")
         return value.lower()
 
     def validate(self, attrs):
         if attrs["password"] != attrs.pop("password_confirm"):
-            raise ValidationError(
-                {"password_confirm": "Passwörter stimmen nicht überein."}
-            )
+            raise ValidationError({"password_confirm": "Пароли не совпадают."})
 
         try:
             validate_password(attrs["password"])
@@ -141,13 +139,9 @@ class PasswordChangeSerializer(serializers.Serializer):
     def validate(self, attrs):
         user = self.context["request"].user
         if not user.check_password(attrs["current_password"]):
-            raise ValidationError(
-                {"current_password": "Aktuelles Passwort ist falsch."}
-            )
+            raise ValidationError({"current_password": "Текущий пароль неверен."})
         if attrs["new_password"] != attrs["new_password_confirm"]:
-            raise ValidationError(
-                {"new_password_confirm": "Passwörter stimmen nicht überein."}
-            )
+            raise ValidationError({"new_password_confirm": "Пароли не совпадают."})
         try:
             validate_password(attrs["new_password"], user=user)
         except DjangoValidationError as exc:
@@ -170,9 +164,7 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         if attrs["new_password"] != attrs["new_password_confirm"]:
-            raise ValidationError(
-                {"new_password_confirm": "Passwörter stimmen nicht überein."}
-            )
+            raise ValidationError({"new_password_confirm": "Пароли не совпадают."})
         return attrs
 
 
@@ -209,7 +201,7 @@ class AccountDeleteSerializer(serializers.Serializer):
     def validate_password(self, value):
         user = self.context["request"].user
         if not user.check_password(value):
-            raise ValidationError("Passwort ist falsch.")
+            raise ValidationError("Неверный пароль.")
         return value
 
 

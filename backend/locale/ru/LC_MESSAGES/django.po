@@ -1,0 +1,240 @@
+# Projektkatalog: duzt ("ты") statt der förmlichen Upstream-Übersetzungen von
+# Django, DRF und SimpleJWT ("Убедитесь, что …").
+#
+# LOCALE_PATHS hat Vorrang vor den Katalogen der Apps und von Django selbst –
+# jede msgid hier überschreibt die gleichlautende upstream. Die msgids müssen
+# deshalb Zeichen für Zeichen den Quelltexten entsprechen (inkl. typografischer
+# Apostrophe wie in "can’t").
+#
+# Nach Änderungen neu kompilieren und django.mo mit committen (das Image hat
+# kein gettext):
+#   cd backend && django-admin compilemessages -l ru --ignore=.venv
+#
+# Der Admin ist davon nicht betroffen: Er läuft auf Deutsch
+# (config.middleware.admin_language_middleware), dieser Katalog gilt nur für ru.
+
+msgid ""
+msgstr "Project-Id-Version: cheremushki\nLanguage: ru\nMIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\nContent-Transfer-Encoding: 8bit\nPlural-Forms: nplurals=4; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<12 || n%100>14) ? 1 : n%10==0 || (n%10>=5 && n%10<=9) || (n%100>=11 && n%100<=14)? 2 : 3);\n"
+
+msgid "This field is required."
+msgstr "Обязательное поле."
+
+msgid "This field may not be blank."
+msgstr "Заполни это поле."
+
+msgid "This field may not be null."
+msgstr "Заполни это поле."
+
+msgid "This field cannot be blank."
+msgstr "Заполни это поле."
+
+msgid "This field cannot be null."
+msgstr "Заполни это поле."
+
+msgid "This list may not be empty."
+msgstr "Выбери хотя бы один вариант."
+
+msgid "This selection may not be empty."
+msgstr "Выбери хотя бы один вариант."
+
+msgid "Enter a valid email address."
+msgstr "Введи корректный адрес электронной почты."
+
+msgid "Enter a valid URL."
+msgstr "Введи корректную ссылку (URL)."
+
+msgid "Enter a valid value."
+msgstr "Введи корректное значение."
+
+msgid "Enter a valid integer."
+msgstr "Введи целое число."
+
+msgid "Enter a whole number."
+msgstr "Введи целое число."
+
+msgid "Enter a number."
+msgstr "Введи число."
+
+msgid "A valid integer is required."
+msgstr "Введи целое число."
+
+msgid "A valid number is required."
+msgstr "Введи число."
+
+msgid "Not a valid string."
+msgstr "Здесь нужен текст."
+
+msgid "Must be a valid boolean."
+msgstr "Нужно значение «да» или «нет»."
+
+msgid "Date has wrong format. Use one of these formats instead: {format}."
+msgstr "Неверный формат даты. Используй один из форматов: {format}."
+
+msgid "Datetime has wrong format. Use one of these formats instead: {format}."
+msgstr "Неверный формат даты и времени. Используй один из форматов: {format}."
+
+msgid "Time has wrong format. Use one of these formats instead: {format}."
+msgstr "Неверный формат времени. Используй один из форматов: {format}."
+
+msgid "Enter a valid date."
+msgstr "Введи корректную дату."
+
+msgid "Enter a valid time."
+msgstr "Введи корректное время."
+
+msgid "Enter a valid date/time."
+msgstr "Введи корректные дату и время."
+
+msgid "Enter a valid \"slug\" consisting of letters, numbers, underscores or hyphens."
+msgstr "Можно использовать только латинские буквы, цифры, дефис и знак подчёркивания."
+
+msgid "\"{input}\" is not a valid choice."
+msgstr "«{input}» — недопустимый вариант. Выбери один из списка."
+
+msgid "Select a valid choice. %(value)s is not one of the available choices."
+msgstr "Выбери вариант из списка: %(value)s среди них нет."
+
+msgid "Value %(value)r is not a valid choice."
+msgstr "Значения %(value)r нет среди допустимых вариантов."
+
+msgid "Ensure this field has at least {min_length} characters."
+msgstr "Нужно не меньше {min_length} символов."
+
+msgid "Ensure this field has no more than {max_length} characters."
+msgstr "Можно не больше {max_length} символов."
+
+msgid "Ensure this field has at least {min_length} elements."
+msgstr "Выбери не меньше {min_length} элементов."
+
+msgid "Ensure this field has no more than {max_length} elements."
+msgstr "Можно выбрать не больше {max_length} элементов."
+
+msgid "Ensure this value is greater than or equal to {min_value}."
+msgstr "Значение должно быть не меньше {min_value}."
+
+msgid "Ensure this value is less than or equal to {max_value}."
+msgstr "Значение должно быть не больше {max_value}."
+
+msgid "Ensure that there are no more than {max_digits} digits in total."
+msgstr "Можно не больше {max_digits} цифр."
+
+msgid "Ensure that there are no more than {max_decimal_places} decimal places."
+msgstr "Можно не больше {max_decimal_places} знаков после запятой."
+
+msgid "Ensure that there are no more than {max_whole_digits} digits before the decimal point."
+msgstr "Можно не больше {max_whole_digits} цифр до запятой."
+
+msgid "Ensure this value has at least %(limit_value)d character (it has %(show_value)d)."
+msgid_plural "Ensure this value has at least %(limit_value)d characters (it has %(show_value)d)."
+msgstr[0] "Нужно не меньше %(limit_value)d символа (сейчас %(show_value)d)."
+msgstr[1] "Нужно не меньше %(limit_value)d символов (сейчас %(show_value)d)."
+msgstr[2] "Нужно не меньше %(limit_value)d символов (сейчас %(show_value)d)."
+msgstr[3] "Нужно не меньше %(limit_value)d символа (сейчас %(show_value)d)."
+
+msgid "Ensure this value has at most %(limit_value)d character (it has %(show_value)d)."
+msgid_plural "Ensure this value has at most %(limit_value)d characters (it has %(show_value)d)."
+msgstr[0] "Можно не больше %(limit_value)d символа (сейчас %(show_value)d)."
+msgstr[1] "Можно не больше %(limit_value)d символов (сейчас %(show_value)d)."
+msgstr[2] "Можно не больше %(limit_value)d символов (сейчас %(show_value)d)."
+msgstr[3] "Можно не больше %(limit_value)d символа (сейчас %(show_value)d)."
+
+msgid "Ensure this value is greater than or equal to %(limit_value)s."
+msgstr "Значение должно быть не меньше %(limit_value)s."
+
+msgid "Ensure this value is less than or equal to %(limit_value)s."
+msgstr "Значение должно быть не больше %(limit_value)s."
+
+msgid "This field must be unique."
+msgstr "Такое значение уже занято."
+
+msgid "No file was submitted."
+msgstr "Файл не загружен."
+
+msgid "The submitted data was not a file. Check the encoding type on the form."
+msgstr "Отправленные данные — не файл. Проверь тип кодировки формы."
+
+msgid "The submitted file is empty."
+msgstr "Загруженный файл пустой."
+
+msgid "No filename could be determined."
+msgstr "Не удалось определить имя файла."
+
+msgid "Ensure this filename has at most {max_length} characters (it has {length})."
+msgstr "Имя файла может быть не длиннее {max_length} символов (сейчас {length})."
+
+msgid "Upload a valid image. The file you uploaded was either not an image or a corrupted image."
+msgstr "Загрузи корректное изображение: этот файл повреждён или не является картинкой."
+
+msgid "Authentication credentials were not provided."
+msgstr "Сначала войди в аккаунт."
+
+msgid "Incorrect authentication credentials."
+msgstr "Неверные данные для входа. Войди снова."
+
+msgid "You do not have permission to perform this action."
+msgstr "У тебя нет прав на это действие."
+
+msgid "Request was throttled."
+msgstr "Слишком много запросов."
+
+msgid "Expected available in {wait} second."
+msgstr "Попробуй снова через {wait} сек."
+
+msgid "Expected available in {wait} seconds."
+msgstr "Попробуй снова через {wait} сек."
+
+msgid "No active account found with the given credentials"
+msgstr "Неверная почта или пароль."
+
+msgid "Token is invalid or expired"
+msgstr "Сессия недействительна или истекла. Войди снова."
+
+msgid "Token is invalid"
+msgstr "Сессия недействительна. Войди снова."
+
+msgid "Token is expired"
+msgstr "Сессия истекла. Войди снова."
+
+msgid "Token is blacklisted"
+msgstr "Сессия уже завершена. Войди снова."
+
+msgid "Given token not valid for any token type"
+msgstr "Сессия недействительна. Войди снова."
+
+msgid "User is inactive"
+msgstr "Аккаунт не активирован."
+
+msgid "User not found"
+msgstr "Пользователь не найден."
+
+msgid "This password is too short. It must contain at least %d character."
+msgid_plural "This password is too short. It must contain at least %d characters."
+msgstr[0] "Пароль слишком короткий: нужно не меньше %d символа."
+msgstr[1] "Пароль слишком короткий: нужно не меньше %d символов."
+msgstr[2] "Пароль слишком короткий: нужно не меньше %d символов."
+msgstr[3] "Пароль слишком короткий: нужно не меньше %d символа."
+
+msgid "This password is too common."
+msgstr "Этот пароль слишком распространён. Придумай другой."
+
+msgid "The password is too similar to the %(verbose_name)s."
+msgstr "Пароль слишком похож на %(verbose_name)s. Придумай другой."
+
+msgid "This password is entirely numeric."
+msgstr "Пароль не может состоять только из цифр."
+
+msgid "Your password must contain at least %(min_length)d character."
+msgid_plural "Your password must contain at least %(min_length)d characters."
+msgstr[0] "Пароль должен содержать не меньше %(min_length)d символа."
+msgstr[1] "Пароль должен содержать не меньше %(min_length)d символов."
+msgstr[2] "Пароль должен содержать не меньше %(min_length)d символов."
+msgstr[3] "Пароль должен содержать не меньше %(min_length)d символа."
+
+msgid "Your password can’t be too similar to your other personal information."
+msgstr "Пароль не должен быть похож на твои личные данные."
+
+msgid "Your password can’t be a commonly used password."
+msgstr "Пароль не должен быть слишком распространённым."
+
+msgid "Your password can’t be entirely numeric."
+msgstr "Пароль не может состоять только из цифр."

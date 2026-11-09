@@ -1,7 +1,15 @@
+"""
+Zusätzliche Passwortregeln.
+
+Die Meldungen sind direkt russisch und ohne gettext: Eine russische msgid
+über gettext zu schicken übersetzt nichts, und die Oberfläche ist
+ausschließlich russisch. Nebenwirkung: Auch der (deutsche) Admin zeigt diese
+Hinweise beim Passwortwechsel auf Russisch – bewusst in Kauf genommen.
+"""
+
 import re
 
 from django.core.exceptions import ValidationError
-from django.utils.translation import gettext_lazy as _
 
 
 class EntirelyAlphabeticPasswordValidator:
@@ -9,13 +17,13 @@ class EntirelyAlphabeticPasswordValidator:
     def validate(password, user=None):
         if not any(character.isdigit() for character in password):
             raise ValidationError(
-                _("Das Passwort muss Ziffern enthalten"),
+                "Пароль должен содержать хотя бы одну цифру.",
                 code="password_has_no_numbers",
             )
 
     @staticmethod
     def get_help_text():
-        return _("Dein Passwort muss mindestens eine Ziffer enthalten.")
+        return "Пароль должен содержать хотя бы одну цифру."
 
 
 class EntirelyNonCapitalLetterPasswordValidator:
@@ -23,13 +31,13 @@ class EntirelyNonCapitalLetterPasswordValidator:
     def validate(password, user=None):
         if not any(character.isupper() for character in password):
             raise ValidationError(
-                _("Das Passwort muss mindestens einen großen Buchstaben enthalten"),
+                "Пароль должен содержать хотя бы одну заглавную букву.",
                 code="password_has_no_capital_letters",
             )
 
     @staticmethod
     def get_help_text():
-        return _("Das Passwort muss mindestens einen großen Buchstaben enthalten.")
+        return "Пароль должен содержать хотя бы одну заглавную букву."
 
 
 class NoSmallLetterPasswordValidator:
@@ -37,13 +45,13 @@ class NoSmallLetterPasswordValidator:
     def validate(password, user=None):
         if not any(character.islower() for character in password):
             raise ValidationError(
-                _("Das Passwort muss mindestens einen kleinen Buchstaben enthalten"),
+                "Пароль должен содержать хотя бы одну строчную букву.",
                 code="password_has_no_small_letters",
             )
 
     @staticmethod
     def get_help_text():
-        return _("Das Passwort muss mindestens einen kleinen Buchstaben enthalten.")
+        return "Пароль должен содержать хотя бы одну строчную букву."
 
 
 class EntirelyNoneSpecialCharactersPasswordValidator:
@@ -51,10 +59,10 @@ class EntirelyNoneSpecialCharactersPasswordValidator:
     def validate(password, user=None):
         if not re.search("[^A-Za-z0-9]", password):
             raise ValidationError(
-                _("Das Passwort muss mindestens ein Sonderzeichen enthalten"),
+                "Пароль должен содержать хотя бы один специальный символ.",
                 code="password_has_no_special_characters",
             )
 
     @staticmethod
     def get_help_text():
-        return _("Das Passwort muss mindestens ein Sonderzeichen enthalten.")
+        return "Пароль должен содержать хотя бы один специальный символ."

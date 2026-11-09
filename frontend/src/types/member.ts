@@ -6,7 +6,6 @@ export type MemberProfile = {
 
   fullName: string;
   avatarUrl?: string;
-  avatarOriginalUrl?: string;
   avatarPositionX?: number;
   avatarPositionY?: number;
   avatarScale?: number;

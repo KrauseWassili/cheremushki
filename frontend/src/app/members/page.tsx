@@ -60,7 +60,7 @@ export default function MembersPage() {
       <main className="mx-auto w-full max-w-lg py-16 text-center">
         <h1 className="text-3xl font-bold">Участники</h1>
         <p className="mt-4 text-muted-foreground">
-          Войдите в аккаунт, чтобы видеть каталог участников.
+          Войди в аккаунт, чтобы видеть каталог участников.
         </p>
         <Button
           type="button"
