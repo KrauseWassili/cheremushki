@@ -13,7 +13,11 @@ name: Cheremushki
 
 services:
   db:
-    image: postgres:17-alpine
+    # Per Digest gepinnt (Multi-Arch-Index von postgres:17-alpine), damit ein
+    # neu vergebener Tag nicht still ein anderes Image deployt. Major-Version
+    # wie in CI (.github/workflows/deploy.yaml). Update:
+    #   docker buildx imagetools inspect postgres:17-alpine  (Zeile "Digest:")
+    image: postgres:17-alpine@sha256:3540c0362c809df084ffac0ae69fe794515f9de92692f02178bcdce0ef0302ac
     volumes:
       - postgres-db:/var/lib/postgresql/data/
     environment:
@@ -93,7 +97,8 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7-alpine
+    # Digest des Multi-Arch-Index von redis:7-alpine, Update wie bei db.
+    image: redis:7-alpine@sha256:c5d34a98396a4775e223c74e929162c35c5a2182901ba26b50ade939941ce14b
     restart: unless-stopped
     healthcheck:
       test: [ "CMD", "redis-cli", "ping" ]

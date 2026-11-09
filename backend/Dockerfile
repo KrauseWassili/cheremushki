@@ -75,8 +75,7 @@ RUN chmod +x /bin/migrations.sh
 # – ohne das gehörten sie root, und collectstatic bzw. Avatar-Uploads
 # schlügen mit PermissionError fehl. celery beat schreibt nach /tmp.
 RUN mkdir -p /src/media /src/staticfiles \
- && chown app:app /src/media /src/staticfiles \
- && touch ./.env
+ && chown app:app /src/media /src/staticfiles
 
 # PYTHONUNBUFFERED=1: Logs sofort auf stdout statt gepuffert.
 # PYTHONDONTWRITEBYTECODE=1: Keine __pycache__-Dateien (/src ist für app
