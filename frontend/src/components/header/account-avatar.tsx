@@ -2,7 +2,6 @@ import { CroppedAvatar } from "@/components/members/cropped-avatar";
 
 type AccountAvatarProps = {
   avatarUrl?: string;
-  avatarOriginalUrl?: string;
   avatarPositionX?: number;
   avatarPositionY?: number;
   avatarScale?: number;
@@ -16,7 +15,6 @@ type AccountAvatarProps = {
 
 export function AccountAvatar({
   avatarUrl,
-  avatarOriginalUrl,
   avatarPositionX,
   avatarPositionY,
   avatarScale,
@@ -33,7 +31,6 @@ export function AccountAvatar({
     return (
       <CroppedAvatar
         src={avatarUrl}
-        originalSrc={avatarOriginalUrl}
         alt={`Аватар ${name}`}
         width={sizePx}
         height={sizePx}

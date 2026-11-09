@@ -1,8 +1,18 @@
-from asgiref.sync import sync_to_async
 from adrf import serializers
+from asgiref.sync import sync_to_async
+from django.core.files.base import ContentFile
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers as drf_serializers
 from rest_framework.exceptions import ValidationError
+
+from apps.bot.tasks.email import send_telegram_invite_email
+from apps.bot.tasks.profile_post import sync_telegram_profile_post
+
+from .avatar_files import (
+    MAX_AVATAR_UPLOAD_BYTES,
+    InvalidAvatarImage,
+    strip_image_metadata,
+)
 from .hashtags import InvalidHashtag, parse_hashtag
 from .models import (
     DIRECTORY_REQUIRED_FIELDS,
@@ -12,8 +22,6 @@ from .models import (
     MemberProfile,
     ProfileTag,
 )
-from apps.bot.tasks.email import send_telegram_invite_email
-from apps.bot.tasks.profile_post import sync_telegram_profile_post
 from .telegram import InvalidTelegramUsername, parse_telegram_username
 
 # Obergrenze pro Profil. Der Wert ist keine technische Schranke, sondern eine
@@ -58,11 +66,11 @@ class ProfileTagListField(drf_serializers.Field):
         if data is None:
             return []
         if not isinstance(data, (list, tuple)):
-            raise ValidationError("tags muss eine Liste sein.")
+            raise ValidationError("Теги нужно передать списком.")
         if len(data) > MAX_PROFILE_TAGS:
             raise ValidationError(
-                f"Höchstens {MAX_PROFILE_TAGS} Tags pro Profil – "
-                f"übergeben wurden {len(data)}."
+                f"Можно выбрать не больше {MAX_PROFILE_TAGS} тегов, "
+                f"выбрано {len(data)}."
             )
 
         canonical_names: list[str] = []
@@ -78,7 +86,7 @@ class ProfileTagListField(drf_serializers.Field):
 
         if unparsable:
             raise ValidationError(
-                "Keine gültigen Tags: " + ", ".join(repr(v) for v in unparsable),
+                "Некорректные теги: " + ", ".join(repr(v) for v in unparsable),
                 code="invalid_tags",
             )
         if not canonical_names:
@@ -93,9 +101,9 @@ class ProfileTagListField(drf_serializers.Field):
         unknown = [name for name in canonical_names if name not in tags_by_name]
         if unknown:
             raise ValidationError(
-                "Unbekannte oder nicht mehr verfügbare Tags: "
+                "Этих тегов нет в словаре или они больше недоступны: "
                 + ", ".join(unknown)
-                + ". Bitte aus der Vorschlagsliste wählen.",
+                + ". Выбери теги из списка подсказок.",
                 code="unknown_tags",
             )
 
@@ -138,7 +146,6 @@ class MemberProfileSerializer(serializers.ModelSerializer):
     email = serializers.SerializerMethodField()
     joined_at = serializers.DateTimeField(source="user.created_at", read_only=True)
     avatar_url = serializers.SerializerMethodField()
-    avatar_original_url = serializers.SerializerMethodField()
     tags = ProfileTagListField(required=False)
     tags_detail = ProfileTagDetailField(read_only=True)
 
@@ -149,7 +156,6 @@ class MemberProfileSerializer(serializers.ModelSerializer):
             "slug",
             "full_name",
             "avatar_url",
-            "avatar_original_url",
             "avatar_position_x",
             "avatar_position_y",
             "avatar_scale",
@@ -179,7 +185,6 @@ class MemberProfileSerializer(serializers.ModelSerializer):
             "id",
             "full_name",
             "avatar_url",
-            "avatar_original_url",
             "email",
             "tags_detail",
             "is_directory_visible",
@@ -212,28 +217,18 @@ class MemberProfileSerializer(serializers.ModelSerializer):
 
         return await sync_to_async(_url)()
 
-    async def get_avatar_original_url(self, obj: MemberProfile) -> str | None:
-        def _url():
-            if not obj.avatar_original:
-                return None
-            request = self.context.get("request")
-            url = obj.avatar_original.url
-            return request.build_absolute_uri(url) if request else url
-
-        return await sync_to_async(_url)()
-
     def validate_languages(self, value):
         if value is None:
             return []
         if not isinstance(value, list):
-            raise ValidationError("languages muss eine Liste sein.")
+            raise ValidationError("Языки нужно передать списком.")
         return [str(item).strip() for item in value if str(item).strip()]
 
     def validate_achievements(self, value):
         if value is None:
             return []
         if not isinstance(value, list):
-            raise ValidationError("achievements muss eine Liste sein.")
+            raise ValidationError("Достижения нужно передать списком.")
         return [str(item).strip() for item in value if str(item).strip()]
 
     def validate_telegram_username(self, value):
@@ -246,8 +241,8 @@ class MemberProfileSerializer(serializers.ModelSerializer):
             return parse_telegram_username(value)
         except InvalidTelegramUsername:
             raise ValidationError(
-                "Bitte einen gültigen Telegram-Usernamen angeben – "
-                "z. B. @durov oder https://t.me/durov."
+                "Укажи корректный username в Telegram – "
+                "например, @durov или https://t.me/durov."
             )
 
     def validate_slug(self, value):
@@ -257,12 +252,12 @@ class MemberProfileSerializer(serializers.ModelSerializer):
         if value in RESERVED_SLUGS:
             # Diese Slugs gehören zu Routen unter /api/v1/profiles/, ein Profil
             # darunter wäre über die API nicht mehr erreichbar.
-            raise ValidationError("Dieser Slug ist reserviert.")
+            raise ValidationError("Этот адрес профиля зарезервирован.")
         qs = MemberProfile.objects.filter(slug=value)
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)
         if qs.exists():
-            raise ValidationError("Dieser Slug ist bereits vergeben.")
+            raise ValidationError("Этот адрес профиля уже занят.")
         return value
 
     async def aupdate(self, instance, validated_data):
@@ -291,6 +286,9 @@ class MyProfileSerializer(MemberProfileSerializer):
     missing_fields = serializers.SerializerMethodField(read_only=True)
     required_fields = serializers.SerializerMethodField(read_only=True)
     invite_sent = serializers.SerializerMethodField(read_only=True)
+    # Nur ein Flag, keine URL: Das Original ist nicht öffentlich ausgeliefert,
+    # das Frontend holt es mit Bearer-Token über /user/me/avatar/original/.
+    has_avatar_original = serializers.SerializerMethodField(read_only=True)
 
     class Meta(MemberProfileSerializer.Meta):
         fields = MemberProfileSerializer.Meta.fields + [
@@ -298,13 +296,18 @@ class MyProfileSerializer(MemberProfileSerializer):
             "missing_fields",
             "required_fields",
             "invite_sent",
+            "has_avatar_original",
         ]
         read_only_fields = MemberProfileSerializer.Meta.read_only_fields + [
             "directory_ready",
             "missing_fields",
             "required_fields",
             "invite_sent",
+            "has_avatar_original",
         ]
+
+    async def get_has_avatar_original(self, obj: MemberProfile) -> bool:
+        return bool(obj.avatar_original)
 
     async def get_directory_ready(self, obj: MemberProfile) -> bool:
         return await sync_to_async(obj.compute_directory_ready)()
@@ -368,13 +371,55 @@ class CitySuggestionSerializer(drf_serializers.Serializer):
     count = drf_serializers.IntegerField(help_text="Sichtbare Profile in dieser Stadt.")
 
 
+class AvatarImageField(drf_serializers.ImageField):
+    """
+    ImageField mit Byte-Obergrenze.
+
+    Die Grenze greift vor super().to_internal_value(): Dort öffnet und prüft
+    Pillow die Datei bereits – bei einer übergroßen Datei soll das gar nicht
+    erst passieren.
+    """
+
+    default_error_messages = {
+        "too_large": (
+            "Файл слишком большой. Максимум – "
+            f"{MAX_AVATAR_UPLOAD_BYTES // (1024 * 1024)} МБ."
+        ),
+    }
+
+    def to_internal_value(self, data):
+        size = getattr(data, "size", None)
+        if size is not None and size > MAX_AVATAR_UPLOAD_BYTES:
+            self.fail("too_large")
+        return super().to_internal_value(data)
+
+
 class AvatarUploadSerializer(serializers.Serializer):
-    avatar = serializers.ImageField(required=True)
-    avatar_original = serializers.ImageField(required=False, allow_null=True)
+    avatar = AvatarImageField(required=True)
+    avatar_original = AvatarImageField(required=False, allow_null=True)
     avatar_position_x = serializers.FloatField(required=False, default=0.5)
     avatar_position_y = serializers.FloatField(required=False, default=0.5)
     avatar_scale = serializers.FloatField(required=False, default=1.0)
     avatar_crop_size = serializers.FloatField(required=False, default=1.0)
+
+    def validate_avatar(self, value):
+        return _sanitize_avatar_image(value)
+
+    def validate_avatar_original(self, value):
+        if value is None:
+            return None
+        return _sanitize_avatar_image(value)
+
+
+def _sanitize_avatar_image(upload) -> ContentFile:
+    """
+    Gespeichert wird nur die neu geschriebene Fassung ohne Metadaten – der
+    Client kann EXIF mitschicken, egal was das eigene Frontend tut.
+    """
+    try:
+        return strip_image_metadata(upload)
+    except InvalidAvatarImage as exc:
+        raise ValidationError(exc.user_message) from exc
 
 
 class ContactRequestCreateSerializer(serializers.Serializer):
@@ -387,11 +432,11 @@ class ContactRequestCreateSerializer(serializers.Serializer):
         profile: MemberProfile = self.context["profile"]
 
         if profile.user_id == request.user.pk:
-            raise ValidationError("Du kannst dich nicht selbst anfragen.")
+            raise ValidationError("Нельзя отправить запрос самому себе.")
         if profile.contact_mode != ContactMode.REQUEST:
-            raise ValidationError("Dieses Profil akzeptiert keine Kontaktanfragen.")
+            raise ValidationError("Этот участник не принимает запросы на контакт.")
         if ContactRequest.objects.filter(
             from_user=request.user, to_profile=profile
         ).exists():
-            raise ValidationError("Du hast dieses Mitglied bereits angefragt.")
+            raise ValidationError("Запрос этому участнику уже отправлен.")
         return attrs

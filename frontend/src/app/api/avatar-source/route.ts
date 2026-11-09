@@ -9,7 +9,13 @@ export async function GET(request: Request) {
     return new NextResponse("Missing src", { status: 400 });
   }
 
+  // Ungültige oder fremde Quellen (auch data:-URLs, deren origin "null" ist)
+  // sind ein Client-Fehler – kein 500 und kein Fetch.
   const sourceUrl = resolveImageSource(source);
+  if (!sourceUrl) {
+    return new NextResponse("Avatar source is not allowed", { status: 400 });
+  }
+
   const response = await fetch(sourceUrl, { cache: "no-store" });
 
   if (!response.ok) {
@@ -26,17 +32,22 @@ export async function GET(request: Request) {
   });
 }
 
-function resolveImageSource(source: string) {
+function resolveImageSource(source: string): string | null {
+  const apiBaseUrl = getServerApiBaseUrl();
+
   if (source.startsWith("/")) {
-    return `${getServerApiBaseUrl()}${source}`;
+    return `${apiBaseUrl}${source}`;
   }
 
-  const apiBaseUrl = getServerApiBaseUrl();
-  const sourceUrl = new URL(source);
-  const apiUrl = new URL(apiBaseUrl);
+  let sourceUrl: URL;
+  try {
+    sourceUrl = new URL(source);
+  } catch {
+    return null;
+  }
 
-  if (sourceUrl.origin !== apiUrl.origin) {
-    throw new Error("Avatar source origin is not allowed");
+  if (sourceUrl.origin !== new URL(apiBaseUrl).origin) {
+    return null;
   }
 
   return sourceUrl.toString();

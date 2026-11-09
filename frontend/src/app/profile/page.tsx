@@ -16,7 +16,7 @@ import { CustomSelect } from "@/components/ui/custom-select";
 import { buttonClassName } from "@/components/ui/button";
 import { fieldClassName } from "@/components/ui/text-field";
 import { ModalFrame } from "@/components/ui/modal";
-import { ApiError } from "@/lib/api";
+import { ApiError, getAllApiErrorMessages } from "@/lib/api";
 import { notifyProfileUpdated } from "@/lib/profile-events";
 import { useEscapeKey } from "@/lib/use-escape-key";
 import {
@@ -27,6 +27,7 @@ import {
 import { getProfileCompletionStatus } from "@/lib/profile";
 import {
   dataUrlToBlob,
+  fetchMyAvatarOriginal,
   fetchMyProfile,
   mapApiProfileToDraft,
   saveMyProfile,
@@ -46,6 +47,10 @@ type AccountNameValues = {
 };
 
 type SaveAccountName = Dispatch<AccountNameValues>;
+
+// Ladezustand des unbeschnittenen Originals (separater Request nach dem
+// Profil). "loading"/"failed" sperren den Zuschnitt-Dialog, siehe AvatarUpload.
+type AvatarOriginalStatus = "none" | "loading" | "loaded" | "failed";
 
 const initialDraft: ProfileDraft = {
   firstName: "",
@@ -81,6 +86,11 @@ export default function ProfilePage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isAvatarDirty, setIsAvatarDirty] = useState(false);
+  const [avatarOriginalStatus, setAvatarOriginalStatus] =
+    useState<AvatarOriginalStatus>("none");
+  const [avatarUploadError, setAvatarUploadError] = useState<string | null>(
+    null,
+  );
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
   // Pflichtfeldliste und Einladungsstand kommen aus dem Backend – die Regel
   // wird hier nicht nachgebildet, nur angezeigt (siehe lib/profile.ts).
@@ -107,6 +117,9 @@ export default function ProfilePage() {
             email: currentUser.email,
           }),
         );
+        if (api.has_avatar_original) {
+          void loadAvatarOriginal(api.avatar_url ?? undefined, () => cancelled);
+        }
       } catch {
         if (cancelled) return;
         setDraft((current) => ({
@@ -123,6 +136,39 @@ export default function ProfilePage() {
       cancelled = true;
     };
   }, [user]);
+
+  /**
+   * Lädt das Original für den Zuschnitt-Dialog nach.
+   *
+   * Bis das Laden abgeschlossen ist, bleibt der Dialog gesperrt: Würde er
+   * vorher mit dem gespeicherten Zuschnitt öffnen, bezögen sich die neuen
+   * Positionen auf den Zuschnitt statt auf das Original, das auf dem Server
+   * liegen bleibt. Aus demselben Grund gibt es nach einem Fehler keinen
+   * Rückfall auf den Zuschnitt, sondern einen sichtbaren Fehler mit Retry.
+   */
+  async function loadAvatarOriginal(
+    expectedAvatarUrl: string | undefined,
+    isCancelled: () => boolean = () => false,
+  ) {
+    setAvatarOriginalStatus("loading");
+    let original: string;
+    try {
+      original = await fetchMyAvatarOriginal();
+    } catch {
+      if (!isCancelled()) setAvatarOriginalStatus("failed");
+      return;
+    }
+    if (isCancelled()) return;
+    setAvatarOriginalStatus("loaded");
+    // Nur übernehmen, solange der Avatar derselbe ist – hat das Mitglied
+    // inzwischen ein neues Foto gewählt oder es entfernt, gehört dieses
+    // Original nicht mehr dazu.
+    setDraft((current) =>
+      current.avatarUrl === expectedAvatarUrl && !current.avatarOriginalUrl
+        ? { ...current, avatarOriginalUrl: original }
+        : current,
+    );
+  }
 
   /**
    * Übernimmt die serverseitigen Statusfelder aus einer Profil-Antwort.
@@ -178,6 +224,7 @@ export default function ProfilePage() {
     }));
     setSaved(false);
     setIsAvatarDirty(true);
+    setAvatarUploadError(null);
     setSaveError(null);
     setSaveSuccess(null);
   }
@@ -185,6 +232,7 @@ export default function ProfilePage() {
     setIsSaving(true);
     setSaveError(null);
     setSaveSuccess(null);
+    setAvatarUploadError(null);
 
     const nextDraft = {
       ...draft,
@@ -199,63 +247,40 @@ export default function ProfilePage() {
     };
 
     try {
-      let avatarUpload: {
-        avatarBlob: Blob;
-        originalBlob: Blob | null;
-        isRemote: boolean;
-      } | null = null;
-
-      if (isAvatarDirty && isDataUrl(nextDraft.avatarUrl)) {
-        const avatarBlob = await dataUrlToBlob(nextDraft.avatarUrl);
-        const originalBlob = isDataUrl(nextDraft.avatarOriginalUrl)
-          ? await dataUrlToBlob(nextDraft.avatarOriginalUrl)
-          : null;
-        avatarUpload = { avatarBlob, originalBlob, isRemote: false };
-      } else if (isAvatarDirty && nextDraft.avatarUrl) {
+      if (isAvatarDirty && nextDraft.avatarUrl) {
         try {
-          avatarUpload = {
-            ...(await createRemoteAvatarUpload(nextDraft)),
-            isRemote: true,
-          };
-        } catch {
-          avatarUpload = null;
-        }
-      }
-
-      if (avatarUpload) {
-        try {
-          await uploadMyAvatar(
-            avatarUpload.avatarBlob,
-            {
-              x: nextDraft.avatarPositionX,
-              y: nextDraft.avatarPositionY,
-              scale: nextDraft.avatarScale,
-              size: nextDraft.avatarCropSize,
-            },
-            avatarUpload.originalBlob,
-          );
+          await uploadDraftAvatar(nextDraft, nextDraft.avatarUrl);
         } catch (error) {
-          if (!avatarUpload.isRemote) {
-            throw error;
-          }
+          // Ohne Foto wird auch der Rest nicht gespeichert: Sonst meldet die
+          // Seite „Профиль сохранён“, obwohl der neue Zuschnitt fehlt.
+          setAvatarUploadError(getAvatarUploadErrorMessage(error));
+          setSaveError("Фото не сохранено, поэтому профиль тоже не сохранён.");
+          setSaved(false);
+          return;
         }
       }
+
       const api = await saveMyProfile(nextDraft);
       applyServerState(api);
-      setDraft(
-        mapApiProfileToDraft(api, {
+      setDraft({
+        ...mapApiProfileToDraft(api, {
           firstName: nextDraft.firstName || user?.first_name,
           lastName: nextDraft.lastName || user?.last_name,
           email: nextDraft.email || user?.email,
         }),
-      );
+        // Die Antwort enthält das Original nicht (nur has_avatar_original).
+        // Lokal liegt es als data:-URL vor und entspricht dem gespeicherten.
+        avatarOriginalUrl: api.has_avatar_original
+          ? nextDraft.avatarOriginalUrl
+          : undefined,
+      });
       setSaved(true);
       setIsAvatarDirty(false);
       notifyProfileUpdated();
       setSaveSuccess(
         api.is_directory_visible
           ? "Профиль сохранён и виден в каталоге участников."
-          : "Профиль сохранён. Заполните все обязательные поля и загрузите аватар, чтобы ваш профиль появился в каталоге.",
+          : "Профиль сохранён. Заполни все обязательные поля и загрузи аватар, чтобы твой профиль появился в каталоге.",
       );
     } catch (err) {
       setSaveError(
@@ -296,7 +321,7 @@ export default function ProfilePage() {
       <div className="flex min-h-screen items-center justify-center">
         <div className="text-center">
           <p className="mb-4 text-2xl font-semibold text-foreground">
-            Вы не вошли в систему :(
+            Сначала войди в аккаунт :(
           </p>
           <Link href="/" className={buttonClassName()}>
             На главную
@@ -312,11 +337,11 @@ export default function ProfilePage() {
         <div>
           <h1 className="text-3xl font-bold">Профиль</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Заполните основные поля, чтобы профиль появился в каталоге
+            Заполни основные поля, чтобы профиль появился в каталоге
             участников.
           </p>
           <p className="mt-2 text-sm text-muted-foreground">
-            После внесения изменений нажмите «Сохранить» внизу страницы.
+            После внесения изменений нажми «Сохранить» внизу страницы.
           </p>
         </div>
       </section>
@@ -434,13 +459,22 @@ export default function ProfilePage() {
                 "Профиль"
               }
               required
-              onChange={(avatarUrl) =>
-                updateField("avatarUrl", avatarUrl ?? "")
-              }
+              onChange={(avatarUrl) => {
+                updateField("avatarUrl", avatarUrl ?? "");
+                setAvatarUploadError(null);
+              }}
               onSourceChange={(avatarOriginalUrl) =>
                 updateField("avatarOriginalUrl", avatarOriginalUrl ?? "")
               }
               onCropChange={updateAvatarCrop}
+              sourceStatus={
+                avatarOriginalStatus === "loading" ||
+                avatarOriginalStatus === "failed"
+                  ? avatarOriginalStatus
+                  : undefined
+              }
+              onRetrySource={() => void loadAvatarOriginal(draft.avatarUrl)}
+              uploadError={avatarUploadError ?? undefined}
             />
           </div>
 
@@ -518,7 +552,7 @@ export default function ProfilePage() {
         <h2 className="text-xl font-bold">Дополнительно</h2>
         <div className="mt-5 grid gap-5 min-[900px]:grid-cols-2">
           <label className="grid gap-2 min-[900px]:col-span-2">
-            <span className="font-bold">Как с вами связываться</span>
+            <span className="font-bold">Как с тобой связываться</span>
             <CustomSelect
               value={draft.contactMode}
               onChange={(value) =>
@@ -907,13 +941,13 @@ function EmailSettingsForm({
     const password = currentPassword.trim();
 
     if (!nextEmail) {
-      setError("Введите новую почту.");
+      setError("Введи новую почту.");
       setMessage(null);
       return;
     }
 
     if (!isValidEmail(nextEmail)) {
-      setError("Введите корректный адрес электронной почты.");
+      setError("Введи корректный адрес электронной почты.");
       setMessage(null);
       return;
     }
@@ -925,7 +959,7 @@ function EmailSettingsForm({
     }
 
     if (!password) {
-      setError("Введите текущий пароль.");
+      setError("Введи текущий пароль.");
       setMessage(null);
       return;
     }
@@ -994,7 +1028,7 @@ function EmailSettingsForm({
           />
         </label>
         <p className="text-xs leading-5 text-muted-foreground">
-          Вам будет отправлено письмо со ссылкой для подтверждения.
+          Тебе придёт письмо со ссылкой для подтверждения.
         </p>
       </div>
 
@@ -1079,7 +1113,7 @@ function PasswordSettingsForm({ onBack }: { onBack: () => void }) {
         </label>
 
         <label className="grid gap-2">
-          <span className="text-sm font-bold">Повторите новый пароль</span>
+          <span className="text-sm font-bold">Повтори новый пароль</span>
           <input
             type="password"
             value={newPasswordConfirm}
@@ -1244,25 +1278,58 @@ function isDataUrl(value: string | undefined): value is string {
   return Boolean(value?.startsWith("data:"));
 }
 
-async function createRemoteAvatarUpload(draft: ProfileDraft) {
-  const sourceUrl = draft.avatarOriginalUrl || draft.avatarUrl;
-  if (!sourceUrl) {
-    throw new Error("Avatar source is missing");
+/**
+ * Lädt den Avatar aus dem Entwurf hoch.
+ *
+ * Neues Foto (avatarUrl ist data:): Zuschnitt und Original liegen lokal vor
+ * und gehen beide mit. Nur neu zugeschnitten (avatarUrl ist die Server-URL):
+ * Der Zuschnitt wird aus dem Original neu gerechnet, das Original selbst
+ * liegt schon auf dem Server und wird nicht erneut geschickt – ohne
+ * avatar_original behält das Backend das gespeicherte. Gibt es kein Original
+ * (alte Avatare), wird der gespeicherte Zuschnitt nachgeschnitten; er darf
+ * dann nicht als „Original“ hochgeladen werden.
+ */
+async function uploadDraftAvatar(draft: ProfileDraft, avatarUrl: string) {
+  const crop = {
+    x: draft.avatarPositionX,
+    y: draft.avatarPositionY,
+    scale: draft.avatarScale,
+    size: draft.avatarCropSize,
+  };
+
+  if (isDataUrl(avatarUrl)) {
+    const avatarBlob = await dataUrlToBlob(avatarUrl);
+    const originalBlob = isDataUrl(draft.avatarOriginalUrl)
+      ? await dataUrlToBlob(draft.avatarOriginalUrl)
+      : null;
+    await uploadMyAvatar(avatarBlob, crop, originalBlob);
+    return;
   }
 
-  const originalBlob = await fetchImageBlob(sourceUrl);
-  const objectUrl = URL.createObjectURL(originalBlob);
+  const sourceUrl = draft.avatarOriginalUrl || avatarUrl;
+  // Das Original kommt per fetchMyAvatarOriginal() als data:-URL und wird
+  // lokal umgewandelt; /api/avatar-source ist nur für Server-URLs da.
+  const sourceBlob = isDataUrl(sourceUrl)
+    ? await dataUrlToBlob(sourceUrl)
+    : await fetchImageBlob(sourceUrl);
+  const objectUrl = URL.createObjectURL(sourceBlob);
 
+  let avatarBlob: Blob;
   try {
-    const avatarBlob = await createCroppedAvatarBlob(objectUrl, {
-      x: draft.avatarPositionX,
-      y: draft.avatarPositionY,
-      size: draft.avatarCropSize,
-    });
-    return { avatarBlob, originalBlob };
+    avatarBlob = await createCroppedAvatarBlob(objectUrl, crop);
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
+  await uploadMyAvatar(avatarBlob, crop, null);
+}
+
+function getAvatarUploadErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    // 400 mit Feldfehlern (avatar, avatar_original) oder 429 mit detail.
+    const messages = getAllApiErrorMessages(error.data);
+    return messages.length > 0 ? messages.join(" ") : error.message;
+  }
+  return "Не удалось подготовить фото. Попробуй ещё раз или загрузи другой файл.";
 }
 
 async function fetchImageBlob(source: string) {

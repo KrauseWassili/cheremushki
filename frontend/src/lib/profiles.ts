@@ -1,5 +1,5 @@
-import {ApiError, apiFetch, getApiBaseUrl} from "@/lib/api";
-import {getAccessToken, isAuthError, refreshAccessToken,} from "@/lib/auth";
+import {ApiError, apiFetch, GENERIC_ERROR_MESSAGE, getApiBaseUrl} from "@/lib/api";
+import {withAuthRetry} from "@/lib/auth";
 import type {ContactMode, MemberProfile} from "@/types/member";
 import type {ProfileDraft} from "@/types/profile";
 
@@ -9,7 +9,6 @@ type ApiMemberProfile = {
     slug: string;
     full_name: string;
     avatar_url?: string | null;
-    avatar_original_url?: string | null;
     avatar_position_x?: number;
     avatar_position_y?: number;
     avatar_scale?: number;
@@ -41,6 +40,9 @@ type ApiMemberProfile = {
     required_fields?: string[];
     // Ist die Telegram-Einladung versandt? Kommt mit jedes Request mit.
     invite_sent?: boolean;
+    // Nur auf /profiles/user/me/: Liegt ein unbeschnittenes Original vor? Es
+    // ist nicht öffentlich, siehe fetchMyAvatarOriginal().
+    has_avatar_original?: boolean;
 };
 
 export type ApiProfileTagSuggestion = {
@@ -67,17 +69,7 @@ async function authedFetch<T>(
     path: string,
     options: RequestInit = {},
 ): Promise<T> {
-    const token = getAccessToken();
-    if (!token) throw new Error("Пользователь не авторизован");
-
-    try {
-        return await apiFetch<T>(path, options, token);
-    } catch (error) {
-        if (!isAuthError(error)) throw error;
-        const refreshed = await refreshAccessToken();
-        if (!refreshed) throw error;
-        return apiFetch<T>(path, options, refreshed);
-    }
+    return withAuthRetry((token) => apiFetch<T>(path, options, token));
 }
 
 export function mapApiProfileToMember(api: ApiMemberProfile): MemberProfile {
@@ -86,7 +78,6 @@ export function mapApiProfileToMember(api: ApiMemberProfile): MemberProfile {
         slug: api.slug,
         fullName: api.full_name,
         avatarUrl: api.avatar_url ?? undefined,
-        avatarOriginalUrl: api.avatar_original_url ?? undefined,
         avatarPositionX: api.avatar_position_x,
         avatarPositionY: api.avatar_position_y,
         avatarScale: api.avatar_scale,
@@ -135,7 +126,9 @@ export function mapApiProfileToDraft(
         tags: (api.tags ?? []).join(", "),
         contactMode: api.contact_mode || "request",
         avatarUrl: api.avatar_url ?? undefined,
-        avatarOriginalUrl: api.avatar_original_url ?? undefined,
+        // Kommt nicht mit der Profilantwort, sondern separat per
+        // fetchMyAvatarOriginal() – die Profilseite lädt es nach.
+        avatarOriginalUrl: undefined,
         avatarPositionX: api.avatar_position_x ?? 50,
         avatarPositionY: api.avatar_position_y ?? 50,
         avatarScale: api.avatar_scale ?? 1,
@@ -229,9 +222,6 @@ export async function uploadMyAvatar(
     },
     original?: Blob | null,
 ): Promise<ApiMemberProfile> {
-    const token = getAccessToken();
-    if (!token) throw new Error("Пользователь не авторизован");
-
     const form = new FormData();
     form.append("avatar", file, "avatar.jpg");
     if (original) {
@@ -242,37 +232,12 @@ export async function uploadMyAvatar(
     form.append("avatar_scale", String(crop.scale));
     form.append("avatar_crop_size", String(crop.size));
 
-    async function post(access: string) {
-        const response = await fetch(
-            `${getApiBaseUrl()}/api/v1/profiles/user/me/avatar/`,
-            {
-                method: "POST",
-                headers: {Authorization: `Bearer ${access}`},
-                body: form,
-            },
-        );
-        const text = await response.text();
-        const data = text ? (JSON.parse(text) as unknown) : null;
-        if (!response.ok) {
-            throw new ApiError(
-                typeof data === "object" && data && "detail" in data
-                    ? String((data as { detail: unknown }).detail)
-                    : response.statusText,
-                response.status,
-                data,
-            );
-        }
-        return data as ApiMemberProfile;
-    }
-
-    try {
-        return await post(token);
-    } catch (error) {
-        if (!isAuthError(error)) throw error;
-        const refreshed = await refreshAccessToken();
-        if (!refreshed) throw error;
-        return post(refreshed);
-    }
+    // Ohne avatar_original behält das Backend das gespeicherte Original.
+    // Fehler (400 mit Feldfehlern, 429) kommen als ApiError aus apiFetch.
+    return authedFetch<ApiMemberProfile>("/api/v1/profiles/user/me/avatar/", {
+        method: "POST",
+        body: form,
+    });
 }
 
 export async function sendContactRequest(
@@ -282,6 +247,42 @@ export async function sendContactRequest(
     await authedFetch(`/api/v1/profiles/${encodeURIComponent(slug)}/contact-request/`, {
         method: "POST",
         body: JSON.stringify({message}),
+    });
+}
+
+/**
+ * Lädt das unbeschnittene Original des eigenen Avatars als data:-URL.
+ *
+ * Das Original liegt nicht unter /media/ (dort öffentlich ohne Login),
+ * sondern nur hinter dem Bearer-Token. Ein <img src> kann keinen
+ * Authorization-Header mitschicken, deshalb der Umweg über fetch → Blob →
+ * data:-URL; Zuschnitt und erneuter Upload arbeiten ohnehin mit data:-URLs.
+ */
+export async function fetchMyAvatarOriginal(): Promise<string> {
+    async function load(access: string): Promise<Blob> {
+        const response = await fetch(
+            `${getApiBaseUrl()}/api/v1/profiles/user/me/avatar/original/`,
+            {
+                headers: {Authorization: `Bearer ${access}`},
+                cache: "no-store",
+            },
+        );
+        if (!response.ok) {
+            throw new ApiError(GENERIC_ERROR_MESSAGE, response.status);
+        }
+        return response.blob();
+    }
+
+    const blob = await withAuthRetry(load);
+    return blobToDataUrl(blob);
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
     });
 }
 

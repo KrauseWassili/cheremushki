@@ -40,14 +40,14 @@ export default function Home() {
         </section>
         <section className="section-block home-intro-teaser text-foreground font-sans">
           <p className="section-block__text flex justify-center font-black text-primary">
-            Не знаете, зачем всё это и с чего начать?
+            Не знаешь, зачем всё это и с чего начать?
           </p>
 
           <p className="section-block__text text-center">
             Ниже коротко объясняем, как устроен клуб и чем он полезен.
           </p>
           <p className="section-block__text text-center">
-            Также можете подробнее узнать{" "}
+            Также можешь подробнее узнать{" "}
             <a href="/project" className="underline">
               о проекте
             </a>{" "}
@@ -63,7 +63,7 @@ export default function Home() {
         <h2 className="section-block__title font-black">Зачем нужен клуб</h2>
 
         <p className="section-block__text">
-          Вы с рождения живёте в Германии или только недавно сюда приехали? В
+          Живёшь в Германии с рождения или переезд случился совсем недавно? В
           любом случае иногда <em>не хватает людей</em>, с которыми не нужно долго
           объяснять свой культурный контекст, шутки и жизненный опыт.
         </p>
@@ -107,7 +107,7 @@ export default function Home() {
 
         <p className="section-block__text">
           Не обязательно писать каждый день или участвовать во всех обсуждениях.
-          Пользуйтесь клубом <em>в комфортном для себя ритме</em>.
+          Пользуйся клубом <em>в комфортном для себя ритме</em>.
         </p>
       </section>
 
@@ -115,12 +115,12 @@ export default function Home() {
         <h2 className="section-block__title font-black">Как всё устроено</h2>
 
         <ol className="ml-5 list-decimal space-y-3 text-lg leading-8 text-body marker:text-accent">
-          <li>Пройдите процедуру регистрации.</li>
+          <li>Пройди процедуру регистрации.</li>
 
-          <li>Расскажите подробнее о себе, заполнив небольшую анкету.</li>
+          <li>Расскажи подробнее о себе, заполнив небольшую анкету.</li>
 
           <li>
-            После этого вы получите доступ в клуб и пригласительную ссылку
+            После этого ты получишь доступ в клуб и пригласительную ссылку
             для вступления в закрытую Telegram-группу по электронной почте.
           </li>
         </ol>
@@ -163,17 +163,17 @@ export default function Home() {
 
       <section className="section-block text-foreground font-sans">
         <h2 className="section-block__title font-black">
-          Хотите присоединиться?
+          Хочешь присоединиться?
         </h2>
 
         <p className="section-block__text">
-          Если вам близка идея клуба, прочитайте правила и {" "}
+          Если тебе близка идея клуба, прочитай правила и {" "}
           <button
             type="button"
             onClick={() => openLogin("register")}
             className="button-flat cursor-pointer p-0 font-bold text-link underline underline-offset-[0.18em] transition-colors hover:text-link-hover"
           >
-            зарегистрируйтесь.
+            зарегистрируйся.
           </button>
         </p>
       </section>

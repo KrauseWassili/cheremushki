@@ -1,10 +1,14 @@
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from unittest import mock
 
 import requests
 from django.core.cache import cache
+from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
 from django.core.checks import messages as checks_messages
 from django.db import DatabaseError
 from django.test import SimpleTestCase, TestCase, override_settings
@@ -22,6 +26,8 @@ from apps.bot.services.profile_card import (
     CAPTION_MAX_LENGTH,
     build_profile_caption,
     build_profile_keyboard,
+    generate_placeholder_avatar,
+    resolve_avatar_bytes,
 )
 from apps.bot.tasks import telegram_user as telegram_user_tasks
 from apps.bot.tasks.profile_post import send_profile_completion_reminder
@@ -631,3 +637,64 @@ class ProfileReminderMailTests(TestCase):
             send_profile_completion_reminder(self.user.pk)
 
         send_email.assert_not_called()
+
+
+class ResolveAvatarBytesTests(TestCase):
+    """
+    Ein Sync-Task kann das Profil laden, kurz bevor ein neuer Upload die alte
+    Datei nach dem Commit löscht. Dann muss der neue Avatar gepostet werden,
+    nicht der Platzhalter.
+    """
+
+    def setUp(self):
+        media_root = tempfile.mkdtemp(prefix="profile-card-tests-")
+        self.addCleanup(shutil.rmtree, media_root, ignore_errors=True)
+        override = override_settings(MEDIA_ROOT=media_root)
+        override.enable()
+        self.addCleanup(override.disable)
+
+        self.user = CustomUser.objects.create_user(
+            email="anna@example.com",
+            password="Str0ng!Passwort",
+            first_name="Anna",
+            last_name="B",
+            is_active=True,
+        )
+        self.old_name = default_storage.save(
+            "avatars/alt.jpg", ContentFile(b"alter-avatar")
+        )
+        self.profile = MemberProfile.objects.create(
+            user=self.user, slug="anna-b", avatar=self.old_name
+        )
+
+    def test_resolve_avatar_bytes_reads_current_file(self):
+        data, name = resolve_avatar_bytes(self.profile)
+        self.assertEqual((data, name), (b"alter-avatar", "alt.jpg"))
+
+    def test_resolve_avatar_bytes_follows_replaced_avatar(self):
+        stale = MemberProfile.objects.select_related("user").get(pk=self.profile.pk)
+        new_name = default_storage.save("avatars/neu.jpg", ContentFile(b"neuer-avatar"))
+        MemberProfile.objects.filter(pk=self.profile.pk).update(avatar=new_name)
+        default_storage.delete(self.old_name)
+
+        data, name = resolve_avatar_bytes(stale)
+
+        self.assertEqual((data, name), (b"neuer-avatar", "neu.jpg"))
+
+    def test_resolve_avatar_bytes_falls_back_to_placeholder_when_file_is_gone(self):
+        # DB zeigt weiter auf die gelöschte Datei → kein Nachladen möglich.
+        default_storage.delete(self.old_name)
+
+        data, name = resolve_avatar_bytes(self.profile)
+
+        self.assertEqual(name, "avatar.png")
+        self.assertEqual(data, generate_placeholder_avatar(self.profile))
+
+    def test_resolve_avatar_bytes_without_avatar_uses_placeholder(self):
+        MemberProfile.objects.filter(pk=self.profile.pk).update(avatar=None)
+        self.profile.refresh_from_db()
+
+        data, name = resolve_avatar_bytes(self.profile)
+
+        self.assertEqual(name, "avatar.png")
+        self.assertTrue(data.startswith(b"\x89PNG"))

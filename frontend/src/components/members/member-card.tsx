@@ -27,7 +27,6 @@ export function MemberCard({ member }: MemberCardProps) {
           {member.avatarUrl ? (
             <CroppedAvatar
               src={member.avatarUrl}
-              originalSrc={member.avatarOriginalUrl}
               width={96}
               height={96}
               loading="lazy"

@@ -1,7 +1,8 @@
+import re
+
 from django.conf import settings
-from django.conf.urls.static import static
 from django.contrib import admin
-from django.urls import include, path
+from django.urls import include, path, re_path
 from drf_spectacular.views import (
     SpectacularAPIView,
     SpectacularRedocView,
@@ -11,16 +12,37 @@ from drf_spectacular.views import (
 from apps.accounts.routers import router as account_router
 from apps.bot.routers import router as tg_router
 from apps.profiles.routers import router as profiles_router
+from config.views import healthz, public_media
 
 urlpatterns = [
+    # Ohne Auth und Throttle: Docker fragt alle paar Sekunden an, ein
+    # Rate-Limit würde den Container nach kurzer Zeit als krank melden.
+    path("healthz", healthz, name="healthz"),
     path("admin/", admin.site.urls),
     path("api/v1/accounts/", include(account_router.urls)),
     path("api/v1/profiles/", include(profiles_router.urls)),
     path("api/v1/bot/", include(tg_router.urls)),
 ]
 
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# Bewusst unabhängig von DEBUG: Der geteilte Nginx (stock_scanner_app) leitet
+# /media/ nur an diesen Container weiter, liefert selbst nichts aus – ohne
+# diese Route wäre bei DEBUG=False jeder Avatar 404. Djangos static.serve ist
+# laut Doku "nicht für Produktion" (ineffizient, keine Range-/Cache-Logik);
+# für eine kleine Community mit nur Avataren in MEDIA_ROOT ist das tragbar.
+# Sobald der Nginx Zugriff auf das Media-Volume bekommt, dort ausliefern und
+# diese Route auf DEBUG zurücknehmen. django.conf.urls.static.static() ist
+# hier unbrauchbar, weil es bei DEBUG=False eine leere Liste liefert.
+#
+# public_media statt serve: Die Avatar-Originale (avatars/originals/) sind
+# nicht öffentlich. re.escape wie in django.conf.urls.static – ein Punkt o. Ä.
+# in MEDIA_URL wäre sonst ein Regex-Platzhalter.
+urlpatterns += [
+    re_path(
+        r"^%s(?P<path>.*)$" % re.escape(settings.MEDIA_URL.lstrip("/")),
+        public_media,
+        {"document_root": settings.MEDIA_ROOT},
+    ),
+]
 
 if settings.API_DOCS_ENABLED:
     urlpatterns += [

@@ -1,19 +1,47 @@
 import io
+import shutil
+import tempfile
 from unittest import mock
 
+from asgiref.sync import async_to_sync
+from django.core.cache import cache
+from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
-from django.test import SimpleTestCase, TestCase
+from django.apps import apps as global_apps
+from django.db import connection, transaction
+from django.db.migrations.executor import MigrationExecutor
+from django.test import (
+    SimpleTestCase,
+    TestCase,
+    TransactionTestCase,
+    override_settings,
+)
 from django.utils import timezone
 from PIL import Image
 from rest_framework.test import APIClient
+from rest_framework.throttling import ScopedRateThrottle
 
 from apps.accounts.models import CustomUser
 from apps.accounts.services.email import ResendError
 from apps.bot.models import TelegramInvite
 
-from .hashtags import InvalidHashtag, normalize_hashtag, parse_hashtag
+from .avatar_files import (
+    AVATAR_DIR,
+    AVATAR_ORIGINALS_DIR,
+    MAX_AVATAR_EDGE,
+    MAX_AVATAR_PIXELS,
+    MAX_AVATAR_UPLOAD_BYTES,
+    InvalidAvatarImage,
+    strip_image_metadata,
+)
+from .hashtags import (
+    MAX_HASHTAG_LENGTH,
+    InvalidHashtag,
+    normalize_hashtag,
+    parse_hashtag,
+)
 from .models import (
     DIRECTORY_REQUIRED_FIELDS,
     RESERVED_SLUGS,
@@ -26,7 +54,13 @@ from .models import (
 from .serializers import MAX_PROFILE_TAGS
 from .tasks import send_contact_request_email
 from .services import MAX_SUGGESTION_LIMIT
-from .tag_vocabulary import INITIAL_PROFILE_TAGS
+from .tag_vocabulary import (
+    ALL_PROFILE_TAGS,
+    COMMUNITY_PROFILE_TAGS,
+    INITIAL_PROFILE_TAGS,
+    find_name_collisions,
+    seed_profile_tags,
+)
 from .telegram import (
     InvalidTelegramUsername,
     build_telegram_dm_url,
@@ -434,7 +468,9 @@ class AnonymizeTests(TestCase):
         for path in paths:
             self.assertTrue(default_storage.exists(path))
 
-        self.profile.anonymize()
+        # Gelöscht wird erst nach dem Commit, siehe schedule_avatar_file_deletion.
+        with self.captureOnCommitCallbacks(execute=True):
+            self.profile.anonymize()
         self.profile.refresh_from_db()
 
         for name in ANONYMIZED_FILE_FIELDS:
@@ -749,11 +785,13 @@ class TagSuggestionEndpointTests(TestCase):
         self.assertEqual([item["name"] for item in self.get()][0], "крипта")
 
     def test_query_matches_name_and_label(self):
+        # "Веб-р" trifft nur das Label (der Name hat "_"), "веб_р" nur den
+        # Namen – präzise genug, um "Веб-технологии" auszuschließen.
         self.assertEqual(
-            [item["name"] for item in self.get("?q=Веб")], ["веб_разработка"]
+            [item["name"] for item in self.get("?q=Веб-р")], ["веб_разработка"]
         )
         self.assertEqual(
-            [item["name"] for item in self.get("?q=веб_")], ["веб_разработка"]
+            [item["name"] for item in self.get("?q=веб_р")], ["веб_разработка"]
         )
 
     def test_response_carries_label_and_hashtag(self):
@@ -901,7 +939,9 @@ class SeedProfileTagsCommandTests(TestCase):
     def test_seeding_is_idempotent(self):
         call_command("seed_profile_tags")
         after_first = ProfileTag.objects.count()
-        self.assertEqual(after_first, len(INITIAL_PROFILE_TAGS))
+        self.assertEqual(
+            after_first, len({parse_hashtag(name) for name, _ in ALL_PROFILE_TAGS})
+        )
 
         call_command("seed_profile_tags")
         self.assertEqual(ProfileTag.objects.count(), after_first)
@@ -958,6 +998,19 @@ class ContactRequestMailTests(TestCase):
         self.contact.refresh_from_db()
         self.assertEqual(self.contact.status, ContactRequestStatus.SENT)
 
+    def test_mail_text_is_russian_and_informal(self):
+        with mock.patch("apps.profiles.tasks.send_email") as send_email:
+            send_contact_request_email(self.contact.pk)
+
+        call = send_email.call_args.kwargs
+        self.assertIn("Запрос на контакт от", call["subject"])
+        self.assertIn(self.sender.full_name, call["subject"])
+        self.assertIn("Здравствуй, Boris", call["message"])
+        # "с тобой" statt "с вами": die Community duzt.
+        self.assertIn("с тобой", call["message"])
+        self.assertIn(self.sender.email, call["message"])
+        self.assertIn("Hallo!", call["message"])
+
     def test_permanent_failure_marks_the_request_as_failed(self):
         with mock.patch(
             "apps.profiles.tasks.send_email",
@@ -968,3 +1021,1064 @@ class ContactRequestMailTests(TestCase):
 
         self.contact.refresh_from_db()
         self.assertEqual(self.contact.status, ContactRequestStatus.FAILED)
+
+
+def canonical_names(vocabulary) -> set[str]:
+    return {parse_hashtag(raw_name) for raw_name, _ in vocabulary}
+
+
+class TagVocabularyTests(SimpleTestCase):
+    """
+    Die Listen speisen Datenmigrationen. Ein Eintrag, den parse_hashtag
+    ablehnt oder umschreibt, würde die Migration abbrechen bzw. einen anderen
+    Namen anlegen als im Diff steht.
+    """
+
+    VOCABULARIES = {
+        "INITIAL_PROFILE_TAGS": INITIAL_PROFILE_TAGS,
+        "COMMUNITY_PROFILE_TAGS": COMMUNITY_PROFILE_TAGS,
+        "ALL_PROFILE_TAGS": ALL_PROFILE_TAGS,
+    }
+
+    def test_vocabulary_entries_resolve_to_valid_hashtags(self):
+        for list_name, vocabulary in self.VOCABULARIES.items():
+            for raw_name, label in vocabulary:
+                with self.subTest(vocabulary=list_name, raw_name=raw_name):
+                    name = parse_hashtag(raw_name)
+                    self.assertLessEqual(len(name), MAX_HASHTAG_LENGTH)
+                    self.assertEqual(parse_hashtag(name), name)
+                    self.assertTrue(label)
+
+    def test_vocabulary_initial_list_keeps_its_thirty_entries(self):
+        # Migration 0006 ist angewandt – die Liste ist append-only.
+        self.assertEqual(len(INITIAL_PROFILE_TAGS), 30)
+        self.assertEqual(len(canonical_names(INITIAL_PROFILE_TAGS)), 30)
+
+    def test_vocabulary_all_is_initial_followed_by_community(self):
+        self.assertEqual(
+            ALL_PROFILE_TAGS, INITIAL_PROFILE_TAGS + COMMUNITY_PROFILE_TAGS
+        )
+
+    def test_vocabulary_community_label_example(self):
+        self.assertIn(
+            ("Бухгалтерский учёт", "Бухгалтерский учёт"), COMMUNITY_PROFILE_TAGS
+        )
+        self.assertIn("бухгалтерский_учёт", canonical_names(COMMUNITY_PROFILE_TAGS))
+
+
+class FindNameCollisionsTests(SimpleTestCase):
+    def test_find_name_collisions_empty_vocabulary(self):
+        self.assertEqual(find_name_collisions([]), {})
+
+    def test_find_name_collisions_unique_names(self):
+        self.assertEqual(find_name_collisions([("IT", "IT"), ("дизайн", "Дизайн")]), {})
+
+    def test_find_name_collisions_groups_by_canonical_name(self):
+        # "#IT" und "it" landen beide auf "it"; Reihenfolge der Labels bleibt.
+        vocabulary = [("IT", "IT"), ("дизайн", "Дизайн"), ("#it", "It-Label")]
+        self.assertEqual(find_name_collisions(vocabulary), {"it": ["IT", "It-Label"]})
+
+    def test_find_name_collisions_identical_labels_are_reported(self):
+        vocabulary = [("Дизайн", "Дизайн"), ("Дизайн", "Дизайн")]
+        self.assertEqual(
+            find_name_collisions(vocabulary), {"дизайн": ["Дизайн", "Дизайн"]}
+        )
+
+    def test_find_name_collisions_real_vocabulary_has_only_identical_labels(self):
+        """
+        Unterschiedliche Labels unter einem Namen hießen: eine Schreibweise
+        wird nie angelegt. Im ausgelieferten Vokabular soll das nicht vorkommen.
+        """
+        collisions = find_name_collisions(ALL_PROFILE_TAGS)
+        overlap = canonical_names(INITIAL_PROFILE_TAGS) & canonical_names(
+            COMMUNITY_PROFILE_TAGS
+        )
+        self.assertEqual(set(collisions), overlap)
+        for name, labels in collisions.items():
+            with self.subTest(name=name):
+                self.assertEqual(len(set(labels)), 1)
+
+
+class SeedProfileTagsFunctionTests(TestCase):
+    """
+    Die Test-DB ist durch die Migrationen bereits geseedet – jeder Test
+    startet deshalb mit leerer Tag-Tabelle.
+    """
+
+    def setUp(self):
+        ProfileTag.objects.all().delete()
+
+    def test_seed_default_creates_only_initial_tags(self):
+        created, skipped = seed_profile_tags(ProfileTag)
+
+        self.assertEqual((created, skipped), (30, 0))
+        self.assertEqual(
+            set(ProfileTag.objects.values_list("name", flat=True)),
+            canonical_names(INITIAL_PROFILE_TAGS),
+        )
+        self.assertFalse(ProfileTag.objects.filter(name="бухгалтерский_учёт").exists())
+
+    def test_seed_duplicate_names_count_once(self):
+        # "IT" und "#it" sind derselbe Name: einmal angelegt, nicht als
+        # "bereits vorhanden" gezählt. Das erste Label gewinnt.
+        created, skipped = seed_profile_tags(
+            ProfileTag, [("IT", "IT"), ("#it", "Anderes"), ("дизайн", "Дизайн")]
+        )
+
+        self.assertEqual((created, skipped), (2, 0))
+        self.assertEqual(ProfileTag.objects.get(name="it").label, "IT")
+
+    def test_seed_existing_tag_counts_as_skipped_and_stays_unchanged(self):
+        make_tag("it", "Eigenes Label", is_active=False)
+
+        created, skipped = seed_profile_tags(ProfileTag, [("IT", "IT"), ("HR", "HR")])
+
+        self.assertEqual((created, skipped), (1, 1))
+        tag = ProfileTag.objects.get(name="it")
+        self.assertEqual(tag.label, "Eigenes Label")
+        self.assertFalse(tag.is_active)
+
+    def test_seed_empty_vocabulary_creates_nothing(self):
+        self.assertEqual(seed_profile_tags(ProfileTag, []), (0, 0))
+        self.assertFalse(ProfileTag.objects.exists())
+
+
+class SeedProfileTagsCommandFullVocabularyTests(TestCase):
+    def setUp(self):
+        ProfileTag.objects.all().delete()
+
+    def run_command(self) -> str:
+        out = io.StringIO()
+        call_command("seed_profile_tags", stdout=out)
+        return out.getvalue()
+
+    def test_command_seeds_full_vocabulary_on_empty_table(self):
+        output = self.run_command()
+
+        expected = canonical_names(ALL_PROFILE_TAGS)
+        self.assertEqual(
+            set(ProfileTag.objects.values_list("name", flat=True)), expected
+        )
+        self.assertIn(f"{len(expected)} angelegt", output)
+        self.assertIn(f"({len(expected)} im Vokabular)", output)
+
+    def test_command_second_run_creates_nothing(self):
+        self.run_command()
+        output = self.run_command()
+
+        unique_count = len(canonical_names(ALL_PROFILE_TAGS))
+        self.assertEqual(ProfileTag.objects.count(), unique_count)
+        self.assertIn(f"0 angelegt, {unique_count} bereits vorhanden", output)
+
+    def test_command_reports_no_conflicting_collisions(self):
+        self.assertNotIn("Namenskollision", self.run_command())
+
+
+MIGRATION_0008 = "0008_seed_community_profile_tags"
+MIGRATION_0007 = "0007_remove_memberprofile_legacy_tags"
+# Nur in der Community-Liste, nicht im Startvokabular.
+COMMUNITY_ONLY_USED = "йога"
+COMMUNITY_ONLY_UNUSED = "кофе"
+# In beiden Listen – gehört 0006 und muss den Rollback überleben.
+SHARED_WITH_INITIAL = "дизайн"
+INITIAL_ONLY = "it"
+
+
+def tag_profile_with(name: str) -> MemberProfile:
+    user = CustomUser.objects.create_user(
+        email=f"{name}@example.com",
+        password="Str0ng!Passwort",
+        first_name="Anna",
+        last_name="B",
+        is_active=True,
+    )
+    profile = MemberProfile(user=user)
+    profile.ensure_unique_slug()
+    profile.save()
+    profile.tags.add(ProfileTag.objects.get(name=name))
+    return profile
+
+
+def load_migration_0008():
+    import importlib
+
+    return importlib.import_module(f"apps.profiles.migrations.{MIGRATION_0008}")
+
+
+class CommunityTagMigrationFunctionTests(TestCase):
+    """
+    Die RunPython-Funktionen direkt mit der aktuellen App-Registry – schnell
+    und unabhängig vom Migrationsgraphen. Das Zusammenspiel mit den
+    historischen Modellen prüft CommunityTagMigrationExecutorTests.
+    """
+
+    def setUp(self):
+        self.migration = load_migration_0008()
+
+    def names(self) -> set[str]:
+        return set(ProfileTag.objects.values_list("name", flat=True))
+
+    def test_reverse_removes_only_unused_community_tags(self):
+        tag_profile_with(COMMUNITY_ONLY_USED)
+
+        self.migration.remove_unused_community_tags(global_apps, None)
+
+        names = self.names()
+        self.assertIn(COMMUNITY_ONLY_USED, names)
+        self.assertNotIn(COMMUNITY_ONLY_UNUSED, names)
+        self.assertIn(SHARED_WITH_INITIAL, names)
+        self.assertIn(INITIAL_ONLY, names)
+        community_only = canonical_names(COMMUNITY_PROFILE_TAGS) - canonical_names(
+            INITIAL_PROFILE_TAGS
+        )
+        self.assertEqual(names & community_only, {COMMUNITY_ONLY_USED})
+        self.assertEqual(names - community_only, canonical_names(INITIAL_PROFILE_TAGS))
+
+    def test_reverse_keeps_profile_assignment(self):
+        profile = tag_profile_with(COMMUNITY_ONLY_USED)
+
+        self.migration.remove_unused_community_tags(global_apps, None)
+
+        self.assertEqual(list(profile.tags.names()), [COMMUNITY_ONLY_USED])
+
+    def test_reverse_keeps_unrelated_admin_tags(self):
+        make_tag("eigener_tag", "Eigener Tag")
+
+        self.migration.remove_unused_community_tags(global_apps, None)
+
+        self.assertIn("eigener_tag", self.names())
+
+    def test_forward_after_reverse_restores_vocabulary(self):
+        self.migration.remove_unused_community_tags(global_apps, None)
+        self.migration.seed_community_tags(global_apps, None)
+
+        self.assertTrue(canonical_names(ALL_PROFILE_TAGS) <= self.names())
+
+    def test_forward_is_idempotent(self):
+        before = ProfileTag.objects.count()
+        self.migration.seed_community_tags(global_apps, None)
+        self.assertEqual(ProfileTag.objects.count(), before)
+
+
+class CommunityTagMigrationExecutorTests(TransactionTestCase):
+    """
+    Echter Rollback und Re-Apply von 0008 über den MigrationExecutor, also mit
+    den historischen Modellen (tagged_profiles muss dort auflösbar sein).
+
+    serialized_rollback: TransactionTestCase leert danach alle Tabellen –
+    ohne Wiederherstellung fehlten den folgenden Tests die per Migration
+    geseedeten Tags.
+    """
+
+    serialized_rollback = True
+
+    def migrate_profiles_to(self, migration_name: str) -> None:
+        executor = MigrationExecutor(connection)
+        executor.migrate([("profiles", migration_name)])
+
+    def setUp(self):
+        # Auch bei einem Fehlschlag wieder auf den aktuellen Stand, sonst
+        # laufen die übrigen Tests gegen ein zurückgerolltes Schema/Vokabular.
+        self.addCleanup(self.migrate_to_leaf)
+
+    def migrate_to_leaf(self) -> None:
+        executor = MigrationExecutor(connection)
+        executor.loader.build_graph()
+        executor.migrate(executor.loader.graph.leaf_nodes())
+
+    def names(self) -> set[str]:
+        return set(ProfileTag.objects.values_list("name", flat=True))
+
+    def test_migration_0008_reverse_keeps_used_and_initial_tags(self):
+        tag_profile_with(COMMUNITY_ONLY_USED)
+
+        self.migrate_profiles_to(MIGRATION_0007)
+
+        names = self.names()
+        self.assertIn(COMMUNITY_ONLY_USED, names)
+        self.assertNotIn(COMMUNITY_ONLY_UNUSED, names)
+        self.assertIn(SHARED_WITH_INITIAL, names)
+        self.assertIn(INITIAL_ONLY, names)
+
+    def test_migration_0008_forward_seeds_community_tags(self):
+        self.migrate_profiles_to(MIGRATION_0007)
+        self.assertNotIn(COMMUNITY_ONLY_UNUSED, self.names())
+
+        self.migrate_profiles_to(MIGRATION_0008)
+
+        self.assertTrue(canonical_names(ALL_PROFILE_TAGS) <= self.names())
+
+
+# --- Avatar-Dateien: Bereinigung, Upload, Original, Altlasten ------------ #
+
+
+class TempMediaRootMixin:
+    """
+    Legt MEDIA_ROOT für jeden Test in ein eigenes Temp-Verzeichnis.
+
+    Avatar-Tests schreiben, löschen und listen Dateien – gegen das echte
+    backend/media würden sie sich gegenseitig (und den Dev-Stand) stören.
+    """
+
+    def setUp(self):
+        super().setUp()
+        media_root = tempfile.mkdtemp(prefix="avatar-tests-")
+        self.addCleanup(shutil.rmtree, media_root, ignore_errors=True)
+        override = override_settings(MEDIA_ROOT=media_root)
+        override.enable()
+        self.addCleanup(override.disable)
+
+    def storage_names(self) -> set[str]:
+        names: set[str] = set()
+        for directory in (AVATAR_DIR, AVATAR_ORIGINALS_DIR):
+            try:
+                _, files = default_storage.listdir(directory)
+            except FileNotFoundError:
+                continue
+            names.update(f"{directory}/{name}" for name in files)
+        return names
+
+
+def image_bytes(
+    size: tuple[int, int] = (4, 4),
+    *,
+    mode: str = "RGB",
+    color=(200, 10, 10),
+    image_format: str = "PNG",
+    **save_options,
+) -> bytes:
+    buffer = io.BytesIO()
+    Image.new(mode, size, color).save(buffer, format=image_format, **save_options)
+    return buffer.getvalue()
+
+
+def image_upload(name: str = "avatar.png", **kwargs) -> SimpleUploadedFile:
+    return SimpleUploadedFile(name, image_bytes(**kwargs), content_type="image/png")
+
+
+GPS_IFD = 0x8825
+ORIENTATION_TAG = 0x0112
+XMP_PAYLOAD = (
+    b'<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF '
+    b'xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+    b"<rdf:Description>geheimer-standort</rdf:Description>"
+    b"</rdf:RDF></x:xmpmeta>"
+)
+
+
+def jpeg_with_gps_and_xmp() -> bytes:
+    exif = Image.Exif()
+    exif[0x010F] = "Handyhersteller"  # Make
+    gps = exif.get_ifd(GPS_IFD)
+    gps[1] = "N"
+    gps[2] = (53.0, 4.0, 30.0)
+    gps[3] = "E"
+    gps[4] = (8.0, 48.0, 0.0)
+    return image_bytes(image_format="JPEG", exif=exif.tobytes(), xmp=XMP_PAYLOAD)
+
+
+def opened(content) -> Image.Image:
+    content.seek(0)
+    return Image.open(io.BytesIO(content.read()))
+
+
+class StripImageMetadataTests(SimpleTestCase):
+    def test_strip_image_metadata_removes_exif_gps_and_xmp(self):
+        source = jpeg_with_gps_and_xmp()
+        # Vorbedingung: Die Eingabe trägt wirklich GPS und XMP, sonst prüft
+        # der Test nichts.
+        with Image.open(io.BytesIO(source)) as original:
+            self.assertTrue(original.getexif().get_ifd(GPS_IFD))
+            self.assertIn("xmp", original.info)
+
+        cleaned = strip_image_metadata(io.BytesIO(source))
+
+        self.assertEqual(cleaned.name, "avatar.jpg")
+        with opened(cleaned) as result:
+            self.assertEqual(result.format, "JPEG")
+            self.assertEqual(dict(result.getexif()), {})
+            self.assertNotIn("exif", result.info)
+            self.assertNotIn("xmp", result.info)
+        cleaned.seek(0)
+        raw = cleaned.read()
+        self.assertNotIn(b"geheimer-standort", raw)
+        self.assertNotIn(b"Handyhersteller", raw)
+
+    def test_strip_image_metadata_applies_exif_orientation(self):
+        # 4x2 quer mit Orientation 6 (90° im Uhrzeigersinn drehen) muss als
+        # 2x4 hochkant herauskommen – ohne das Tag stünde es sonst falsch.
+        exif = Image.Exif()
+        exif[ORIENTATION_TAG] = 6
+        source = image_bytes((4, 2), image_format="JPEG", exif=exif.tobytes())
+
+        cleaned = strip_image_metadata(io.BytesIO(source))
+
+        with opened(cleaned) as result:
+            self.assertEqual(result.size, (2, 4))
+            self.assertNotIn(ORIENTATION_TAG, result.getexif())
+
+    def test_strip_image_metadata_downscales_long_edge(self):
+        # 3000x1000 → längste Kante 2048, Seitenverhältnis 3:1 → 2048x683.
+        source = image_bytes((3000, 1000), image_format="PNG")
+
+        cleaned = strip_image_metadata(io.BytesIO(source))
+
+        with opened(cleaned) as result:
+            self.assertEqual(max(result.size), MAX_AVATAR_EDGE)
+            self.assertEqual(result.size, (2048, 683))
+
+    def test_strip_image_metadata_keeps_small_image_size(self):
+        cleaned = strip_image_metadata(io.BytesIO(image_bytes((40, 30))))
+        with opened(cleaned) as result:
+            self.assertEqual(result.size, (40, 30))
+
+    def test_strip_image_metadata_rejects_too_many_pixels_before_decoding(self):
+        # 4001x4000 = 16 004 000 Pixel > 16 MP. Die Bilddaten werden
+        # abgeschnitten: Würde dekodiert, käme "truncated" mit der
+        # Standardmeldung – die Pixelmeldung beweist, dass nur der Header
+        # gelesen wurde.
+        full = image_bytes((4001, 4000), mode="L", color=0)
+        header_and_some_data = full[:200]
+
+        with self.assertRaises(InvalidAvatarImage) as ctx:
+            strip_image_metadata(io.BytesIO(header_and_some_data))
+
+        self.assertIn("слишком большое", ctx.exception.user_message)
+        self.assertIn("16 мегапикселей", ctx.exception.user_message)
+
+    def test_strip_image_metadata_accepts_exactly_max_pixels(self):
+        # Grenzwert: 4000x4000 = 16 000 000 ist erlaubt (Vergleich mit ">").
+        source = image_bytes((4000, 4000), mode="L", color=0)
+        cleaned = strip_image_metadata(io.BytesIO(source))
+        with opened(cleaned) as result:
+            self.assertEqual(result.size, (MAX_AVATAR_EDGE, MAX_AVATAR_EDGE))
+        self.assertEqual(MAX_AVATAR_PIXELS, 4000 * 4000)
+
+    def test_strip_image_metadata_treats_decompression_bomb_warning_as_error(self):
+        # Pillow warnt ab MAX_IMAGE_PIXELS (hier 100) und bricht erst ab dem
+        # Doppelten ab. 12x10 = 120 Pixel liegt dazwischen → nur Warnung,
+        # die trotzdem zum Fehler werden muss.
+        source = image_bytes((12, 10))
+        with mock.patch.object(Image, "MAX_IMAGE_PIXELS", 100):
+            with self.assertRaises(InvalidAvatarImage) as ctx:
+                strip_image_metadata(io.BytesIO(source))
+        self.assertTrue(ctx.exception.user_message)
+
+    def test_strip_image_metadata_keeps_palette_png_transparency(self):
+        image = Image.new("P", (4, 4), 0)
+        image.putpalette([0, 0, 0, 255, 0, 0] + [0] * (256 * 3 - 6))
+        image.putpixel((1, 1), 1)
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG", transparency=0)
+
+        cleaned = strip_image_metadata(io.BytesIO(buffer.getvalue()))
+
+        self.assertEqual(cleaned.name, "avatar.png")
+        with opened(cleaned) as result:
+            self.assertEqual(result.format, "PNG")
+            self.assertIn("transparency", result.info)
+            # Pixel 0 transparent, Pixel (1,1) deckend rot.
+            rgba = result.convert("RGBA")
+            self.assertEqual(rgba.getpixel((0, 0))[3], 0)
+            self.assertEqual(rgba.getpixel((1, 1)), (255, 0, 0, 255))
+
+    def test_strip_image_metadata_converts_gif_to_jpeg(self):
+        source = image_bytes((4, 4), mode="P", color=1, image_format="GIF")
+
+        cleaned = strip_image_metadata(io.BytesIO(source))
+
+        self.assertEqual(cleaned.name, "avatar.jpg")
+        with opened(cleaned) as result:
+            self.assertEqual(result.format, "JPEG")
+
+    def test_strip_image_metadata_keeps_webp_format(self):
+        source = image_bytes((4, 4), image_format="WEBP")
+        cleaned = strip_image_metadata(io.BytesIO(source))
+        self.assertEqual(cleaned.name, "avatar.webp")
+
+    def test_strip_image_metadata_rejects_non_image(self):
+        with self.assertRaises(InvalidAvatarImage) as ctx:
+            strip_image_metadata(io.BytesIO(b"%PDF-1.4 kein Bild"))
+        self.assertIn("JPG, PNG или WebP", ctx.exception.user_message)
+
+    def test_strip_image_metadata_rejects_empty_file(self):
+        with self.assertRaises(InvalidAvatarImage):
+            strip_image_metadata(io.BytesIO(b""))
+
+
+AVATAR_URL = "/api/v1/profiles/user/me/avatar/"
+AVATAR_ORIGINAL_URL = "/api/v1/profiles/user/me/avatar/original/"
+
+
+class AvatarUploadTestBase(TempMediaRootMixin, TestCase):
+    def setUp(self):
+        super().setUp()
+        cache.clear()
+        self.invite_delay = mock.patch(
+            "apps.bot.tasks.email.send_telegram_invite_email.delay"
+        ).start()
+        self.sync_post = mock.patch(
+            "apps.bot.tasks.profile_post.sync_telegram_profile_post.delay"
+        ).start()
+        self.addCleanup(mock.patch.stopall)
+
+        self.user = CustomUser.objects.create_user(
+            email="anna@example.com",
+            password="Str0ng!Passwort",
+            first_name="Anna",
+            last_name="B",
+            is_active=True,
+        )
+        self.profile = MemberProfile(user=self.user, **COMPLETE_PROFILE)
+        self.profile.ensure_unique_slug()
+        self.profile.save()
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def upload(self, **extra):
+        payload = {"avatar": image_upload(), **extra}
+        return self.client.post(AVATAR_URL, payload, format="multipart")
+
+
+class AvatarUploadValidationTests(AvatarUploadTestBase):
+    def test_avatar_upload_rejects_file_over_five_megabytes(self):
+        too_large = SimpleUploadedFile(
+            "avatar.jpg", b"\0" * (MAX_AVATAR_UPLOAD_BYTES + 1), "image/jpeg"
+        )
+        response = self.client.post(
+            AVATAR_URL, {"avatar": too_large}, format="multipart"
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            [str(m) for m in response.data["avatar"]],
+            ["Файл слишком большой. Максимум – 5 МБ."],
+        )
+
+    def test_avatar_upload_rejects_non_image_with_russian_message(self):
+        not_an_image = SimpleUploadedFile("avatar.png", b"kein Bild", "image/png")
+        response = self.client.post(
+            AVATAR_URL, {"avatar": not_an_image}, format="multipart"
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("avatar", response.data)
+
+    def test_avatar_upload_stores_cleaned_file_under_random_name(self):
+        upload = SimpleUploadedFile(
+            "user-1.jpg", jpeg_with_gps_and_xmp(), content_type="image/jpeg"
+        )
+        response = self.client.post(AVATAR_URL, {"avatar": upload}, format="multipart")
+
+        self.assertEqual(response.status_code, 200)
+        self.profile.refresh_from_db()
+        self.assertRegex(self.profile.avatar.name, r"^avatars/[0-9a-f]{32}\.jpg$")
+        with self.profile.avatar.open("rb") as handle:
+            stored = handle.read()
+        self.assertNotIn(b"geheimer-standort", stored)
+        with Image.open(io.BytesIO(stored)) as result:
+            self.assertEqual(dict(result.getexif()), {})
+
+
+class AvatarUploadThrottleTests(AvatarUploadTestBase):
+    def test_avatar_upload_is_throttled_by_own_scope(self):
+        with mock.patch.dict(ScopedRateThrottle.THROTTLE_RATES, {"avatar": "2/hour"}):
+            statuses = [self.upload().status_code for _ in range(3)]
+
+        self.assertEqual(statuses, [200, 200, 429])
+
+    def test_avatar_throttle_does_not_limit_profile_reads(self):
+        with mock.patch.dict(ScopedRateThrottle.THROTTLE_RATES, {"avatar": "1/hour"}):
+            self.upload()
+            self.assertEqual(self.upload().status_code, 429)
+            response = self.client.get("/api/v1/profiles/user/me/")
+        self.assertEqual(response.status_code, 200)
+
+
+class AvatarUploadPersistenceTests(AvatarUploadTestBase):
+    def test_avatar_upload_does_not_overwrite_concurrent_profile_change(self):
+        """
+        Ein paralleler PATCH ändert city, nachdem der Upload das Profil
+        gelesen hat. update_fields darf den alten Stand nicht zurückschreiben.
+        """
+        original = MemberProfile.avatar_file_names
+        calls = []
+
+        def concurrent_patch(profile):
+            if not calls:
+                MemberProfile.objects.filter(pk=profile.pk).update(city="Hamburg")
+            calls.append(profile.pk)
+            return original(profile)
+
+        with mock.patch.object(
+            MemberProfile,
+            "avatar_file_names",
+            autospec=True,
+            side_effect=concurrent_patch,
+        ):
+            response = self.upload(avatar_scale="1.5")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(calls, "Der simulierte parallele Schreibzugriff lief nie.")
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.city, "Hamburg")
+        self.assertTrue(self.profile.avatar)
+        self.assertEqual(self.profile.avatar_scale, 1.5)
+
+    def test_avatar_upload_keeps_text_fields(self):
+        response = self.upload()
+        self.assertEqual(response.status_code, 200)
+        self.profile.refresh_from_db()
+        for name, value in COMPLETE_PROFILE.items():
+            with self.subTest(field=name):
+                self.assertEqual(getattr(self.profile, name), value)
+
+    def test_avatar_upload_completing_profile_sends_invite_exactly_once(self):
+        # Alle Textpflichtfelder sind gefüllt, nur der Avatar fehlt → der
+        # erste Upload ist die Flanke, der zweite nicht mehr.
+        first = self.upload()
+        second = self.upload()
+
+        self.assertEqual(first.status_code, 200)
+        self.assertTrue(first.data["directory_ready"])
+        self.assertEqual(first.data["missing_fields"], [])
+        self.assertEqual(second.status_code, 200)
+        self.invite_delay.assert_called_once_with(self.user.pk)
+        # Der Profilpost wird bei jedem Upload angestoßen.
+        self.assertEqual(self.sync_post.call_count, 2)
+        self.profile.refresh_from_db()
+        self.assertTrue(self.profile.is_directory_visible)
+
+    def test_avatar_upload_on_incomplete_profile_sends_no_invite(self):
+        MemberProfile.objects.filter(pk=self.profile.pk).update(bio="")
+
+        response = self.upload()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data["directory_ready"])
+        self.assertEqual(response.data["missing_fields"], ["bio"])
+        self.invite_delay.assert_not_called()
+
+    def test_avatar_upload_response_has_no_original_url(self):
+        response = self.upload(avatar_original=image_upload("orig.png"))
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["has_avatar_original"])
+        self.assertFalse(any("original_url" in key for key in response.data))
+
+
+class AvatarReplacementCleanupTests(AvatarUploadTestBase):
+    def setUp(self):
+        super().setUp()
+        response = self.upload(avatar_original=image_upload("orig.png"))
+        self.assertEqual(response.status_code, 200)
+        self.profile.refresh_from_db()
+        self.old_files = self.profile.avatar_file_names()
+        self.assertEqual(len(self.old_files), 2)
+
+    def test_replaced_files_are_deleted_only_after_commit(self):
+        with self.captureOnCommitCallbacks(execute=False) as callbacks:
+            response = self.upload(avatar_original=image_upload("orig.png"))
+        self.assertEqual(response.status_code, 200)
+
+        # Vor dem Commit verweist die DB-Zeile anderer Leser noch auf sie.
+        for name in self.old_files:
+            self.assertTrue(default_storage.exists(name), name)
+
+        for callback in callbacks:
+            callback()
+
+        for name in self.old_files:
+            self.assertFalse(default_storage.exists(name), name)
+        self.profile.refresh_from_db()
+        new_files = self.profile.avatar_file_names()
+        self.assertFalse(new_files & self.old_files)
+        for name in new_files:
+            self.assertTrue(default_storage.exists(name), name)
+
+    def test_avatar_only_upload_keeps_existing_original(self):
+        old_original = self.profile.avatar_original.name
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.upload()
+
+        self.assertEqual(response.status_code, 200)
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.avatar_original.name, old_original)
+        self.assertTrue(default_storage.exists(old_original))
+        self.assertFalse(
+            default_storage.exists(next(iter(self.old_files - {old_original})))
+        )
+
+    def test_replaced_files_survive_rollback(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            with mock.patch.object(
+                MemberProfile,
+                "refresh_directory_visibility",
+                side_effect=RuntimeError("DB weg"),
+            ):
+                with self.assertRaises(RuntimeError):
+                    self.upload(avatar_original=image_upload("orig.png"))
+
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.avatar_file_names(), self.old_files)
+        for name in self.old_files:
+            self.assertTrue(default_storage.exists(name), name)
+
+
+async def collect_async_stream(response) -> bytes:
+    return b"".join([chunk async for chunk in response.streaming_content])
+
+
+class AvatarOriginalEndpointTests(AvatarUploadTestBase):
+    def test_avatar_original_requires_authentication(self):
+        response = APIClient().get(AVATAR_ORIGINAL_URL)
+        self.assertEqual(response.status_code, 401)
+
+    def test_avatar_original_without_original_returns_404(self):
+        response = self.client.get(AVATAR_ORIGINAL_URL)
+        self.assertEqual(response.status_code, 404)
+
+    def test_avatar_original_with_missing_file_returns_404(self):
+        MemberProfile.objects.filter(pk=self.profile.pk).update(
+            avatar_original=f"{AVATAR_ORIGINALS_DIR}/{'0' * 32}.png"
+        )
+        response = self.client.get(AVATAR_ORIGINAL_URL)
+        self.assertEqual(response.status_code, 404)
+
+    def test_avatar_original_streams_file_privately(self):
+        self.upload(avatar_original=image_upload("orig.png", size=(30, 20)))
+        self.profile.refresh_from_db()
+        with self.profile.avatar_original.open("rb") as handle:
+            expected = handle.read()
+
+        response = self.client.get(AVATAR_ORIGINAL_URL)
+
+        self.assertEqual(response.status_code, 200)
+        # Async-Iterator: Unter ASGI wird blockweise gestreamt, nicht vorab
+        # komplett in den Speicher gelesen.
+        self.assertTrue(response.streaming)
+        self.assertTrue(response.is_async)
+        body = async_to_sync(collect_async_stream)(response)
+        self.assertEqual(body, expected)
+        self.assertEqual(response["Content-Type"], "image/png")
+        self.assertEqual(response["Content-Length"], str(len(expected)))
+        self.assertEqual(response["Cache-Control"], "private, no-store")
+
+    def test_avatar_original_returns_only_own_original(self):
+        self.upload(avatar_original=image_upload("orig.png"))
+        other = CustomUser.objects.create_user(
+            email="boris@example.com",
+            password="Str0ng!Passwort",
+            first_name="Boris",
+            last_name="C",
+            is_active=True,
+        )
+        client = APIClient()
+        client.force_authenticate(other)
+
+        response = client.get(AVATAR_ORIGINAL_URL)
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_public_profile_exposes_no_avatar_original(self):
+        self.upload(avatar_original=image_upload("orig.png"))
+        self.profile.refresh_from_db()
+        self.assertTrue(self.profile.is_directory_visible)
+
+        response = self.client.get(f"/api/v1/profiles/{self.profile.slug}/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(any("original" in key for key in response.data))
+        self.assertNotIn(self.profile.avatar_original.name, str(response.data))
+
+
+class AnonymizeAvatarFilesTests(TempMediaRootMixin, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.user = CustomUser.objects.create_user(
+            email="anna@example.com",
+            password="Str0ng!Passwort",
+            first_name="Anna",
+            last_name="B",
+            is_active=True,
+        )
+        self.profile = MemberProfile(user=self.user, **COMPLETE_PROFILE)
+        self.profile.avatar.save("a.png", one_pixel_png(), save=False)
+        self.profile.avatar_original.save("o.png", one_pixel_png(), save=False)
+        self.profile.ensure_unique_slug()
+        self.profile.save()
+        self.files = self.profile.avatar_file_names()
+
+    def test_anonymize_deletes_files_only_after_commit(self):
+        with self.captureOnCommitCallbacks(execute=False) as callbacks:
+            self.profile.anonymize()
+
+        for name in self.files:
+            self.assertTrue(default_storage.exists(name), name)
+        for callback in callbacks:
+            callback()
+        for name in self.files:
+            self.assertFalse(default_storage.exists(name), name)
+
+    def test_anonymize_rollback_keeps_files(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            with self.assertRaises(RuntimeError):
+                with transaction.atomic():
+                    self.profile.anonymize()
+                    raise RuntimeError("Kontolöschung bricht ab")
+
+        for name in self.files:
+            self.assertTrue(default_storage.exists(name), name)
+
+    def test_anonymize_does_not_scan_avatar_directory(self):
+        # Altlasten räumt cleanup_legacy_avatars auf – anonymize() darf das
+        # Verzeichnis nicht mehr durchsuchen, und fremde Dateien bleiben.
+        default_storage.save(f"{AVATAR_DIR}/user-{self.user.pk}.jpg", one_pixel_png())
+        with mock.patch(
+            "django.core.files.storage.FileSystemStorage.listdir"
+        ) as listdir:
+            with self.captureOnCommitCallbacks(execute=True):
+                self.profile.anonymize()
+
+        listdir.assert_not_called()
+        self.assertTrue(default_storage.exists(f"{AVATAR_DIR}/user-{self.user.pk}.jpg"))
+
+
+def legacy_jpeg(color=(10, 200, 10)) -> bytes:
+    exif = Image.Exif()
+    gps = exif.get_ifd(GPS_IFD)
+    gps[1] = "N"
+    gps[2] = (53.0, 4.0, 30.0)
+    return image_bytes((6, 6), color=color, image_format="JPEG", exif=exif.tobytes())
+
+
+def save_exact(name: str, content: bytes) -> str:
+    stored = default_storage.save(name, ContentFile(content))
+    assert stored == name, f"Storage hat {name} zu {stored} umbenannt"
+    return stored
+
+
+def mean_color(data: bytes) -> tuple[int, ...]:
+    with Image.open(io.BytesIO(data)) as image:
+        return image.convert("RGB").resize((1, 1)).getpixel((0, 0))
+
+
+class CleanupLegacyAvatarsTests(TempMediaRootMixin, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.invite_delay = mock.patch(
+            "apps.bot.tasks.email.send_telegram_invite_email.delay"
+        ).start()
+        self.sync_post = mock.patch(
+            "apps.bot.tasks.profile_post.sync_telegram_profile_post.delay"
+        ).start()
+        self.addCleanup(mock.patch.stopall)
+
+    def make_profile(self, email: str, *, visible: bool = False, **fields):
+        user = CustomUser.objects.create_user(
+            email=email,
+            password="Str0ng!Passwort",
+            first_name=email.split("@")[0],
+            last_name="X",
+            is_active=True,
+        )
+        profile = MemberProfile(
+            user=user, is_directory_visible=visible, **COMPLETE_PROFILE, **fields
+        )
+        profile.ensure_unique_slug()
+        profile.save()
+        return profile
+
+    def run_cleanup(self, *args) -> str:
+        out = io.StringIO()
+        with self.captureOnCommitCallbacks(execute=True):
+            call_command("cleanup_legacy_avatars", *args, stdout=out)
+        return out.getvalue()
+
+    def test_cleanup_rewrites_referenced_legacy_file_without_exif(self):
+        old_avatar = save_exact(f"{AVATAR_DIR}/user-1.jpg", legacy_jpeg())
+        old_original = save_exact(
+            f"{AVATAR_ORIGINALS_DIR}/user-1_AbC123x.jpg", legacy_jpeg()
+        )
+        profile = self.make_profile(
+            "anna@example.com", avatar=old_avatar, avatar_original=old_original
+        )
+
+        self.run_cleanup()
+
+        profile.refresh_from_db()
+        self.assertRegex(profile.avatar.name, r"^avatars/[0-9a-f]{32}\.jpg$")
+        self.assertRegex(
+            profile.avatar_original.name, r"^avatars/originals/[0-9a-f]{32}\.jpg$"
+        )
+        for field in (profile.avatar, profile.avatar_original):
+            with field.open("rb") as handle, Image.open(handle) as image:
+                self.assertEqual(dict(image.getexif()), {})
+        self.assertFalse(default_storage.exists(old_avatar))
+        self.assertFalse(default_storage.exists(old_original))
+
+    def test_cleanup_deletes_old_file_only_after_commit(self):
+        # Der Löschschritt für Unreferenziertes ist hier abgeschaltet: Im
+        # TestCase laufen die on_commit-Callbacks erst am Ende, er fände die
+        # umgeschriebene Altdatei sonst schon vorher als unreferenziert.
+        old_avatar = save_exact(f"{AVATAR_DIR}/user-1.jpg", legacy_jpeg())
+        profile = self.make_profile("anna@example.com", avatar=old_avatar)
+
+        with mock.patch(
+            "apps.profiles.legacy_avatars._delete_unreferenced_legacy_files"
+        ):
+            with self.captureOnCommitCallbacks(execute=False) as callbacks:
+                call_command("cleanup_legacy_avatars", stdout=io.StringIO())
+            self.assertTrue(default_storage.exists(old_avatar))
+            for callback in callbacks:
+                callback()
+
+        self.assertFalse(default_storage.exists(old_avatar))
+        profile.refresh_from_db()
+        self.assertTrue(default_storage.exists(profile.avatar.name))
+
+    def test_cleanup_deletes_unreferenced_legacy_files_only(self):
+        stale = {
+            save_exact(f"{AVATAR_DIR}/user-999.jpg", legacy_jpeg()),
+            save_exact(f"{AVATAR_DIR}/user-7_Xy12ab.png", one_pixel_png().read()),
+            save_exact(f"{AVATAR_ORIGINALS_DIR}/user-5.jpg", legacy_jpeg()),
+        }
+        # Nicht im alten Schema: bleiben trotz fehlender Referenz liegen.
+        kept = {
+            save_exact(f"{AVATAR_DIR}/{'a' * 32}.jpg", legacy_jpeg()),
+            save_exact(f"{AVATAR_DIR}/user-1-backup.jpg", legacy_jpeg()),
+            save_exact(f"{AVATAR_DIR}/myuser-1.jpg", legacy_jpeg()),
+        }
+
+        output = self.run_cleanup()
+
+        for name in stale:
+            self.assertFalse(default_storage.exists(name), name)
+            self.assertIn(f"Gelöscht: {name}", output)
+        for name in kept:
+            self.assertTrue(default_storage.exists(name), name)
+
+    def test_cleanup_keeps_user_1_and_user_10_apart(self):
+        # Rot für user-1, Blau für user-10: Nach dem Umschreiben muss jedes
+        # Profil noch sein eigenes Bild tragen und keines gelöscht sein.
+        red, blue = (220, 0, 0), (0, 0, 220)
+        first = self.make_profile(
+            "eins@example.com",
+            avatar=save_exact(f"{AVATAR_DIR}/user-1.jpg", legacy_jpeg(red)),
+        )
+        tenth = self.make_profile(
+            "zehn@example.com",
+            avatar=save_exact(f"{AVATAR_DIR}/user-10.jpg", legacy_jpeg(blue)),
+        )
+
+        self.run_cleanup()
+
+        first.refresh_from_db()
+        tenth.refresh_from_db()
+        self.assertNotEqual(first.avatar.name, tenth.avatar.name)
+        with first.avatar.open("rb") as handle:
+            r, g, b = mean_color(handle.read())
+            self.assertGreater(r, 150)
+            self.assertLess(b, 60)
+        with tenth.avatar.open("rb") as handle:
+            r, g, b = mean_color(handle.read())
+            self.assertGreater(b, 150)
+            self.assertLess(r, 60)
+
+    def test_cleanup_clears_dead_references_without_side_effects(self):
+        profile = self.make_profile(
+            "anna@example.com",
+            visible=True,
+            avatar=f"{AVATAR_DIR}/{'b' * 32}.jpg",
+            avatar_original=f"{AVATAR_ORIGINALS_DIR}/user-3.jpg",
+        )
+
+        output = self.run_cleanup()
+
+        profile.refresh_from_db()
+        self.assertFalse(profile.avatar)
+        self.assertFalse(profile.avatar_original)
+        # Avatar ist Pflichtfeld → Profil fällt aus dem Verzeichnis.
+        self.assertFalse(profile.is_directory_visible)
+        self.assertIn(
+            f"Nicht mehr im Verzeichnis sichtbar (Avatar fehlt): {profile.pk}", output
+        )
+        self.invite_delay.assert_not_called()
+        self.sync_post.assert_not_called()
+
+    def test_cleanup_keeps_existing_random_name_reference(self):
+        name = save_exact(f"{AVATAR_DIR}/{'c' * 32}.jpg", legacy_jpeg())
+        profile = self.make_profile("anna@example.com", visible=True, avatar=name)
+
+        self.run_cleanup()
+
+        profile.refresh_from_db()
+        self.assertEqual(profile.avatar.name, name)
+        self.assertTrue(profile.is_directory_visible)
+        self.assertTrue(default_storage.exists(name))
+
+    def test_cleanup_dry_run_changes_nothing(self):
+        referenced = save_exact(f"{AVATAR_DIR}/user-1.jpg", legacy_jpeg())
+        save_exact(f"{AVATAR_DIR}/user-999.jpg", legacy_jpeg())
+        self.make_profile("anna@example.com", visible=True, avatar=referenced)
+        dead = self.make_profile(
+            "boris@example.com", visible=True, avatar=f"{AVATAR_DIR}/user-2.jpg"
+        )
+        files_before = self.storage_names()
+        rows_before = list(
+            MemberProfile.objects.order_by("pk").values(
+                "pk", "avatar", "avatar_original", "is_directory_visible"
+            )
+        )
+
+        output = self.run_cleanup("--dry-run")
+
+        self.assertEqual(self.storage_names(), files_before)
+        self.assertEqual(
+            list(
+                MemberProfile.objects.order_by("pk").values(
+                    "pk", "avatar", "avatar_original", "is_directory_visible"
+                )
+            ),
+            rows_before,
+        )
+        self.assertIn("[Dry-Run]", output)
+        self.assertIn(f"Umgeschrieben: {referenced} -> <Zufallsname>", output)
+        self.assertIn(f"Gelöscht: {AVATAR_DIR}/user-999.jpg", output)
+        self.assertIn(f"Profil {dead.pk}: avatar zeigt auf fehlende", output)
+        self.assertNotIn(f"Gelöscht: {referenced}", output)
+
+    def test_cleanup_second_run_is_idempotent(self):
+        save_exact(f"{AVATAR_DIR}/user-999.jpg", legacy_jpeg())
+        profile = self.make_profile(
+            "anna@example.com",
+            visible=True,
+            avatar=save_exact(f"{AVATAR_DIR}/user-1.jpg", legacy_jpeg()),
+        )
+        self.make_profile("boris@example.com", avatar=f"{AVATAR_DIR}/user-2.jpg")
+
+        self.run_cleanup()
+        profile.refresh_from_db()
+        files_after_first = self.storage_names()
+        avatar_after_first = profile.avatar.name
+
+        output = self.run_cleanup()
+
+        profile.refresh_from_db()
+        self.assertEqual(profile.avatar.name, avatar_after_first)
+        self.assertEqual(self.storage_names(), files_after_first)
+        self.assertIn(
+            "Avatar-Altlasten: 0 Verweise geleert, 0 Dateien umgeschrieben, "
+            "0 gelöscht, 0 nicht lesbar.",
+            output,
+        )
+
+    def test_cleanup_leaves_unreadable_legacy_file_in_place(self):
+        broken = save_exact(f"{AVATAR_DIR}/user-4.jpg", b"kein Bild")
+        profile = self.make_profile("anna@example.com", avatar=broken)
+
+        output = self.run_cleanup()
+
+        profile.refresh_from_db()
+        self.assertEqual(profile.avatar.name, broken)
+        self.assertTrue(default_storage.exists(broken))
+        self.assertIn(f"Nicht lesbar, unverändert gelassen: {broken}", output)

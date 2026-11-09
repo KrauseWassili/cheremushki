@@ -16,7 +16,6 @@ import type {HeaderNavItem} from "./header/types";
 
 type HeaderAvatar = {
     url?: string;
-    originalUrl?: string;
     positionX?: number;
     positionY?: number;
     scale?: number;
@@ -51,7 +50,6 @@ export default function Header() {
                     setIsProfileReady(Boolean(api.directory_ready));
                     setAccountAvatar({
                         url: api.avatar_url ?? undefined,
-                        originalUrl: api.avatar_original_url ?? undefined,
                         positionX: api.avatar_position_x,
                         positionY: api.avatar_position_y,
                         scale: api.avatar_scale,
@@ -190,7 +188,6 @@ export default function Header() {
                             <div ref={accountMenuRef} className="relative flex h-10 items-center">
                                 <AccountDropdown
                                     avatarUrl={accountAvatar.url}
-                                    avatarOriginalUrl={accountAvatar.originalUrl}
                                     avatarPositionX={accountAvatar.positionX}
                                     avatarPositionY={accountAvatar.positionY}
                                     avatarScale={accountAvatar.scale}
@@ -247,7 +244,6 @@ export default function Header() {
                 {isMenuOpen && (
                     <MobileMenu
                         avatarUrl={accountAvatar.url}
-                        avatarOriginalUrl={accountAvatar.originalUrl}
                         avatarPositionX={accountAvatar.positionX}
                         avatarPositionY={accountAvatar.positionY}
                         avatarScale={accountAvatar.scale}

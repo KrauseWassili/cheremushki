@@ -137,7 +137,7 @@ def send_profile_completion_reminder(self, user_id: int):
     )
 
     text = (
-        f"Привет, {user.first_name}!\n\n"
+        f"Здравствуй, {user.first_name}!\n\n"
         "Осталось заполнить профиль — после этого придёт приглашение "
         "в Telegram-группу клуба.\n"
         f"Продолжить: {profile_url}"

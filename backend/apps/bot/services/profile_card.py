@@ -216,20 +216,57 @@ def resolve_avatar_bytes(profile: MemberProfile) -> tuple[bytes, str]:
     """
     Liest den Avatar fällt auf ein generiertes Initialen Bild zurück.
     """
-    if profile.avatar:
-        try:
-            profile.avatar.open("rb")
-            data = profile.avatar.read()
-            profile.avatar.close()
-            name = profile.avatar.name.rsplit("/", 1)[-1] or "avatar.jpg"
-            return data, name
-        except (OSError, ValueError) as exc:  # ValueError: SuspiciousFileOperation
-            # Storage nicht erreichbar oder Datei weg: Der Post soll trotzdem
-            # rausgehen, aber der Fehlschlag darf nicht unsichtbar bleiben –
-            # er ändert den Bildinhalt und damit den Post.
-            logger.warning(
-                "Avatar für user=%s nicht lesbar (%s) – Platzhalter wird genutzt",
-                profile.user_id,
-                exc,
-            )
+    avatar = _read_current_avatar(profile)
+    if avatar is not None:
+        return avatar
     return generate_placeholder_avatar(profile), "avatar.png"
+
+
+def _read_current_avatar(profile: MemberProfile) -> tuple[bytes, str] | None:
+    """
+    Liest die Avatar-Datei, notfalls in der inzwischen gespeicherten Fassung.
+
+    Ein ersetzter Avatar wird nach dem Commit gelöscht. Hat dieser Task das
+    Profil kurz davor geladen, zeigt profile.avatar noch auf die gelöschte
+    Datei – dann den aktuellen Namen nachladen statt einen Platzhalter zu
+    posten. Der Upload stößt ohnehin einen eigenen Sync an, aber bis der
+    läuft, stünde sonst ein falsches Bild im Kanal.
+    """
+    if not profile.avatar:
+        return None
+    try:
+        return _read_avatar_file(profile)
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError) as exc:  # ValueError: SuspiciousFileOperation
+        _log_unreadable_avatar(profile, exc)
+        return None
+
+    stale_name = profile.avatar.name
+    profile.refresh_from_db(fields=["avatar"])
+    if not profile.avatar or profile.avatar.name == stale_name:
+        _log_unreadable_avatar(profile, FileNotFoundError(stale_name))
+        return None
+    try:
+        return _read_avatar_file(profile)
+    except (OSError, ValueError) as exc:
+        _log_unreadable_avatar(profile, exc)
+        return None
+
+
+def _read_avatar_file(profile: MemberProfile) -> tuple[bytes, str]:
+    with profile.avatar.open("rb") as handle:
+        data = handle.read()
+    name = profile.avatar.name.rsplit("/", 1)[-1] or "avatar.jpg"
+    return data, name
+
+
+def _log_unreadable_avatar(profile: MemberProfile, exc: Exception) -> None:
+    # Storage nicht erreichbar oder Datei weg: Der Post soll trotzdem
+    # rausgehen, aber der Fehlschlag darf nicht unsichtbar bleiben – er
+    # ändert den Bildinhalt und damit den Post.
+    logger.warning(
+        "Avatar für user=%s nicht lesbar (%s) – Platzhalter wird genutzt",
+        profile.user_id,
+        exc,
+    )

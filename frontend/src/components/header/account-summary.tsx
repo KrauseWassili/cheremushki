@@ -2,7 +2,6 @@ import { AccountAvatar } from "./account-avatar";
 
 type AccountSummaryProps = {
   avatarUrl?: string;
-  avatarOriginalUrl?: string;
   avatarPositionX?: number;
   avatarPositionY?: number;
   avatarScale?: number;
@@ -14,7 +13,6 @@ type AccountSummaryProps = {
 
 export function AccountSummary({
   avatarUrl,
-  avatarOriginalUrl,
   avatarPositionX,
   avatarPositionY,
   avatarScale,
@@ -28,7 +26,6 @@ export function AccountSummary({
       <div className="grid grid-cols-[auto_auto] items-center justify-center gap-3">
         <AccountAvatar
           avatarUrl={avatarUrl}
-          avatarOriginalUrl={avatarOriginalUrl}
           avatarPositionX={avatarPositionX}
           avatarPositionY={avatarPositionY}
           avatarScale={avatarScale}

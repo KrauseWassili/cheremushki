@@ -25,6 +25,13 @@ type AvatarUploadProps = {
     avatarUrl?: string;
     sourceUrl?: string;
   }) => void | Promise<void>;
+  // Ladezustand des gespeicherten Originals: Solange es lädt oder nicht
+  // geladen werden konnte, bleibt der Zuschnitt gesperrt – sonst bezöge sich
+  // der neue Kadr auf den alten Zuschnitt statt auf das Original.
+  sourceStatus?: "loading" | "failed";
+  onRetrySource?: () => void;
+  // Fehler beim Hochladen (vom Backend, z. B. Größe/Format oder 429).
+  uploadError?: string;
 };
 
 const allowedTypes = [
@@ -47,6 +54,9 @@ export function AvatarUpload({
   onChange,
   onSourceChange,
   onCropChange,
+  sourceStatus,
+  onRetrySource,
+  uploadError,
 }: AvatarUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState("");
@@ -69,10 +79,14 @@ export function AvatarUpload({
   } | null>(null);
 
   const cropSource = sourceValue || localSourceValue || value;
+  // Ein frisch gewähltes Foto bringt sein Original selbst mit.
+  const pendingSourceStatus =
+    sourceValue || localSourceValue ? undefined : sourceStatus;
 
   useEscapeKey(isCropOpen, () => setIsCropOpen(false));
 
   function openCropModal() {
+    if (pendingSourceStatus) return;
     setDraftCrop({
       x: positionX,
       y: positionY,
@@ -320,8 +334,12 @@ export function AvatarUpload({
                 <Button
                   type="button"
                   onClick={openCropModal}
+                  disabled={Boolean(pendingSourceStatus)}
+                  aria-busy={pendingSourceStatus === "loading"}
                 >
-                  Настроить кадр
+                  {pendingSourceStatus === "loading"
+                    ? "Загружаем исходник…"
+                    : "Настроить кадр"}
                 </Button>
 
                 <Button
@@ -335,9 +353,22 @@ export function AvatarUpload({
             )}
           </div>
 
-          {error && (
+          {pendingSourceStatus === "failed" && (
             <p role="alert" className="mt-2 text-sm text-destructive">
-              {error}
+              Не удалось загрузить исходное фото для кадрирования.{" "}
+              <button
+                type="button"
+                onClick={onRetrySource}
+                className="cursor-pointer font-bold underline"
+              >
+                Попробовать снова
+              </button>
+            </p>
+          )}
+
+          {(error || uploadError) && (
+            <p role="alert" className="mt-2 text-sm text-destructive">
+              {error || uploadError}
             </p>
           )}
         </div>
@@ -347,18 +378,18 @@ export function AvatarUpload({
         JPG, PNG или WebP. Не более 5 МБ.
       </p>
 
-      {cropSource && isCropOpen && (
+      {cropSource && isCropOpen && !pendingSourceStatus && (
         <ModalFrame label="Настройка фотографии" className="max-w-xl">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-xl font-bold">Настройка фотографии</h3>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Фото вписано в квадрат. Передвиньте рамку или потяните угол.
+                  Фото вписано в квадрат. Передвинь рамку или потяни угол.
                 </p>
                 {!sourceValue && !localSourceValue && (
                   <p className="mt-2 text-xs font-bold text-warning">
                     Для старой аватарки доступен только текущий сохранённый кадр.
-                    Загрузите фото заново, чтобы кадрировать исходник.
+                    Загрузи фото заново, чтобы кадрировать исходник.
                   </p>
                 )}
               </div>

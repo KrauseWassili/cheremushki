@@ -185,6 +185,30 @@ export async function refreshAccessToken(): Promise<string | null> {
   return refreshRequest;
 }
 
+/**
+ * Führt einen authentifizierten Request aus; bei 401 einmal den Token
+ * erneuern und wiederholen.
+ *
+ * Der Refresh läuft über refreshAccessToken(), parallele 401er teilen sich
+ * also denselben Refresh-Request. `request` muss mehrfach aufrufbar sein
+ * (Body nicht als Stream übergeben).
+ */
+export async function withAuthRetry<T>(
+  request: (accessToken: string) => Promise<T>,
+): Promise<T> {
+  const token = getAccessToken();
+  if (!token) throw new Error("Пользователь не авторизован");
+
+  try {
+    return await request(token);
+  } catch (error) {
+    if (!isAuthError(error)) throw error;
+    const refreshed = await refreshAccessToken();
+    if (!refreshed) throw error;
+    return request(refreshed);
+  }
+}
+
 async function refreshAccessTokenOnce(): Promise<string | null> {
   const refresh = getRefreshToken();
   const storage = getActiveStorage();
@@ -267,33 +291,16 @@ function isJwtExpired(token: string): boolean {
 export async function updateCurrentUser(
   data: Pick<User, "first_name" | "last_name">,
 ): Promise<User> {
-  const token = getAccessToken();
-  if (!token) {
-    throw new Error("Пользователь не авторизован");
-  }
-
-  try {
-    return await apiFetch<User>(
+  return withAuthRetry((token) =>
+    apiFetch<User>(
       "/api/v1/accounts/user/me/",
       {
         method: "PATCH",
         body: JSON.stringify(data),
       },
       token,
-    );
-  } catch (error) {
-    if (!isAuthError(error)) throw error;
-    const refreshed = await refreshAccessToken();
-    if (!refreshed) throw error;
-    return apiFetch<User>(
-      "/api/v1/accounts/user/me/",
-      {
-        method: "PATCH",
-        body: JSON.stringify(data),
-      },
-      refreshed,
-    );
-  }
+    ),
+  );
 }
 
 export async function changePassword(
@@ -301,9 +308,6 @@ export async function changePassword(
   newPassword: string,
   newPasswordConfirm: string,
 ): Promise<void> {
-  const token = getAccessToken();
-  if (!token) throw new Error("Пользователь не авторизован");
-
   const options = {
     method: "POST",
     body: JSON.stringify({
@@ -313,23 +317,15 @@ export async function changePassword(
     }),
   };
 
-  try {
-    await apiFetch("/api/v1/accounts/password/change/", options, token);
-  } catch (error) {
-    if (!isAuthError(error)) throw error;
-    const refreshed = await refreshAccessToken();
-    if (!refreshed) throw error;
-    await apiFetch("/api/v1/accounts/password/change/", options, refreshed);
-  }
+  await withAuthRetry((token) =>
+    apiFetch("/api/v1/accounts/password/change/", options, token),
+  );
 }
 
 export async function requestEmailChange(
   newEmail: string,
   currentPassword: string,
 ): Promise<{ detail: string }> {
-  const token = getAccessToken();
-  if (!token) throw new Error("Пользователь не авторизован");
-
   const options = {
     method: "POST",
     body: JSON.stringify({
@@ -338,22 +334,13 @@ export async function requestEmailChange(
     }),
   };
 
-  try {
-    return await apiFetch<{ detail: string }>(
+  return withAuthRetry((token) =>
+    apiFetch<{ detail: string }>(
       "/api/v1/accounts/email/change/",
       options,
       token,
-    );
-  } catch (error) {
-    if (!isAuthError(error)) throw error;
-    const refreshed = await refreshAccessToken();
-    if (!refreshed) throw error;
-    return apiFetch<{ detail: string }>(
-      "/api/v1/accounts/email/change/",
-      options,
-      refreshed,
-    );
-  }
+    ),
+  );
 }
 
 export async function requestPasswordReset(email: string): Promise<void> {
@@ -401,20 +388,12 @@ export async function confirmEmailChange(
 }
 
 export async function deleteAccount(password: string): Promise<void> {
-  const token = getAccessToken();
-  if (!token) throw new Error("Пользователь не авторизован");
-
   const options = {
     method: "POST",
     body: JSON.stringify({ password }),
   };
 
-  try {
-    await apiFetch("/api/v1/accounts/delete/", options, token);
-  } catch (error) {
-    if (!isAuthError(error)) throw error;
-    const refreshed = await refreshAccessToken();
-    if (!refreshed) throw error;
-    await apiFetch("/api/v1/accounts/delete/", options, refreshed);
-  }
+  await withAuthRetry((token) =>
+    apiFetch("/api/v1/accounts/delete/", options, token),
+  );
 }

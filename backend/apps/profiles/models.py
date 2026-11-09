@@ -1,3 +1,5 @@
+import uuid
+
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
@@ -5,6 +7,11 @@ from django.utils.text import slugify
 from taggit.managers import TaggableManager
 from taggit.models import TagBase, TaggedItemBase
 
+from .avatar_files import (
+    AVATAR_DIR,
+    AVATAR_ORIGINALS_DIR,
+    schedule_avatar_file_deletion,
+)
 from .hashtags import (
     InvalidHashtag,
     build_hashtag,
@@ -12,19 +19,25 @@ from .hashtags import (
     parse_hashtag,
 )
 
+_AVATAR_EXTENSIONS = frozenset({"jpg", "jpeg", "png", "webp"})
+_DEFAULT_AVATAR_EXTENSION = "jpg"
 
+
+def _avatar_extension(filename: str) -> str:
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    return ext if ext in _AVATAR_EXTENSIONS else _DEFAULT_AVATAR_EXTENSION
+
+
+# Zufällige Namen statt user-<id>: /media/ ist ohne Login erreichbar, ein aus
+# der User-ID ableitbarer Name machte jeden Avatar per Durchzählen abrufbar.
+# Die Funktionen bleiben unter ihrem Namen in diesem Modul – Migration 0003
+# referenziert sie über den Importpfad.
 def avatar_upload_to(instance: "MemberProfile", filename: str) -> str:
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "jpg"
-    if ext not in {"jpg", "jpeg", "png", "webp"}:
-        ext = "jpg"
-    return f"avatars/user-{instance.user_id}.{ext}"
+    return f"{AVATAR_DIR}/{uuid.uuid4().hex}.{_avatar_extension(filename)}"
 
 
 def avatar_original_upload_to(instance: "MemberProfile", filename: str) -> str:
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "jpg"
-    if ext not in {"jpg", "jpeg", "png", "webp"}:
-        ext = "jpg"
-    return f"avatars/originals/user-{instance.user_id}.{ext}"
+    return f"{AVATAR_ORIGINALS_DIR}/{uuid.uuid4().hex}.{_avatar_extension(filename)}"
 
 
 # --- Die Pflichtfelder für die Aufnahme ins Verzeichnis
@@ -60,13 +73,15 @@ class ProfileTag(TagBase):
         blank=True,
         default="",
         verbose_name="Anzeigename",
-        help_text="Lesbare Schreibweise, z. B. Веб-разработка.",
+        help_text="Lesbare Schreibweise, z. B. „Веб-разработка“. "
+        "Leer = der kanonische Name wird angezeigt.",
     )
     is_active = models.BooleanField(
         default=True,
         verbose_name="Aktiv",
-        help_text="Inaktive Tags verschwinden aus Autocomplete und werden bei"
-        "neuen Zuordnungen abgelehnt. Bestehende Zuordnungen bleiben bestehen.",
+        help_text="Inaktive Tags verschwinden aus Autocomplete und "
+        "werden bei neuen Zuordnungen abgelehnt. Bestehende "
+        "Zuordnungen bleiben bestehen.",
     )
 
     class Meta:
@@ -253,15 +268,28 @@ class MemberProfile(models.Model):
                 self.save(update_fields=["is_directory_visible"])
         return became_ready
 
+    def avatar_file_names(self) -> set[str]:
+        """
+        Storage-Namen der aktuell verknüpften Avatar-Dateien.
+        """
+        return {
+            field.name
+            for field in (self.avatar, self.avatar_original)
+            if field and field.name
+        }
+
     def anonymize(self) -> None:
         """
         Entfernt alle personenbezogenen Inhalte aus dem Profil bei Löschen.
         """
-        for name in ("avatar", "avatar_original"):
-            field = getattr(self, name)
-            if field:
-                # --- save=False: Es folgt ohnehin ein save() über alle Felder.
-                field.delete(save=False)
+        # Gelöscht wird erst nach dem Commit: Rollt die Kontolöschung zurück,
+        # verweist das Profil sonst auf Dateien, die es nicht mehr gibt.
+        # Altlasten mit user-<id>-Namen räumt cleanup_legacy_avatars beim
+        # Deploy auf, sie sind hier nicht mehr zu erwarten.
+        stale_files = self.avatar_file_names()
+        self.avatar = None
+        self.avatar_original = None
+        schedule_avatar_file_deletion(stale_files)
 
         self.headline = ""
         self.city = ""

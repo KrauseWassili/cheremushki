@@ -1,14 +1,23 @@
+import mimetypes
+from collections.abc import AsyncIterator
+
 from adrf import mixins, viewsets
 from adrf.mixins import Response, get_data
 from asgiref.sync import sync_to_async
+from django.core.files import File
+from django.db import transaction
+from django.http import FileResponse
 from django_filters.rest_framework import DjangoFilterBackend
-from drf_spectacular.utils import OpenApiParameter, extend_schema
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework import status
 from rest_framework.decorators import action
+from rest_framework.exceptions import NotFound
 from rest_framework.filters import SearchFilter
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.throttling import ScopedRateThrottle
 
+from .avatar_files import schedule_avatar_file_deletion
 from .filters import MemberProfileFilter
 from .models import ContactRequest, ContactRequestStatus, MemberProfile
 from .permissions import IsActiveAuthenticated
@@ -29,6 +38,19 @@ from .services import (
     suggest_tags,
 )
 from .tasks import send_contact_request_email
+
+DEFAULT_IMAGE_CONTENT_TYPE = "image/jpeg"
+# Felder, die ein Avatar-Upload schreibt. update_fields statt eines vollen
+# save(): Ein parallel laufender PATCH auf /me/ soll seine Textfelder nicht
+# durch den beim Upload gelesenen Stand überschrieben bekommen.
+AVATAR_UPLOAD_FIELDS = (
+    "avatar",
+    "avatar_original",
+    "avatar_position_x",
+    "avatar_position_y",
+    "avatar_scale",
+    "avatar_crop_size",
+)
 
 SUGGESTION_QUERY_PARAM = OpenApiParameter(
     name="q",
@@ -69,6 +91,14 @@ class ProfileMeViewSet(viewsets.GenericViewSet):
     permission_classes = [IsActiveAuthenticated]
     queryset = MemberProfile.objects.none()
 
+    def get_throttles(self):
+        # Jeder Upload dekodiert bis zu zwei Bilder und schreibt sie neu –
+        # teuer genug für ein eigenes Limit pro Mitglied.
+        if getattr(self, "action", None) == "upload_avatar":
+            self.throttle_scope = "avatar"
+            return [ScopedRateThrottle()]
+        return super().get_throttles()
+
     @action(detail=False, methods=["get", "put", "patch"], url_path="me")
     async def me(self, request):
         profile = await aget_or_create_profile(request.user)
@@ -95,22 +125,39 @@ class ProfileMeViewSet(viewsets.GenericViewSet):
         data = serializer.validated_data
 
         def _save_avatar():
-            profile.avatar = data["avatar"]
-            if data.get("avatar_original") is not None:
-                profile.avatar_original = data["avatar_original"]
-            profile.avatar_position_x = data.get(
-                "avatar_position_x", profile.avatar_position_x
-            )
-            profile.avatar_position_y = data.get(
-                "avatar_position_y", profile.avatar_position_y
-            )
-            profile.avatar_scale = data.get("avatar_scale", profile.avatar_scale)
-            profile.avatar_crop_size = data.get(
-                "avatar_crop_size", profile.avatar_crop_size
-            )
-            profile.save()
-            became_ready = profile.refresh_directory_visibility(save=True)
-            return profile, became_ready
+            with transaction.atomic():
+                # Unter Zeilensperre neu laden: Zwei parallele Uploads lasen
+                # sonst denselben alten Stand, und die Datei des ersten bliebe
+                # verwaist liegen, weil der zweite sie nie als "ersetzt" sah.
+                # of=("self",): nur das Profil sperren, nicht den User.
+                locked = (
+                    MemberProfile.objects.select_for_update(of=("self",))
+                    .select_related("user")
+                    .get(pk=profile.pk)
+                )
+                # Ersetzte Dateien nach dem Commit löschen. Ohne das lägen
+                # alte Avatare unter weiterhin gültigen /media/-URLs herum,
+                # obwohl das Mitglied sie ausgetauscht hat.
+                replaced_files = locked.avatar_file_names()
+                locked.avatar = data["avatar"]
+                if data.get("avatar_original") is not None:
+                    locked.avatar_original = data["avatar_original"]
+                locked.avatar_position_x = data.get(
+                    "avatar_position_x", locked.avatar_position_x
+                )
+                locked.avatar_position_y = data.get(
+                    "avatar_position_y", locked.avatar_position_y
+                )
+                locked.avatar_scale = data.get("avatar_scale", locked.avatar_scale)
+                locked.avatar_crop_size = data.get(
+                    "avatar_crop_size", locked.avatar_crop_size
+                )
+                locked.save(update_fields=AVATAR_UPLOAD_FIELDS)
+                became_ready = locked.refresh_directory_visibility(save=True)
+                schedule_avatar_file_deletion(
+                    replaced_files - locked.avatar_file_names()
+                )
+            return locked, became_ready
 
         profile, became_ready = await sync_to_async(_save_avatar)()
 
@@ -122,6 +169,58 @@ class ProfileMeViewSet(viewsets.GenericViewSet):
         # Vollständigkeit nicht selbst nachrechnen.
         out = MyProfileSerializer(profile, context={"request": request})
         return Response(await get_data(out), status=status.HTTP_200_OK)
+
+    @extend_schema(
+        responses={
+            (200, "image/*"): OpenApiTypes.BINARY,
+            404: OpenApiResponse(description="Kein Original hochgeladen."),
+        }
+    )
+    @action(detail=False, methods=["get"], url_path="me/avatar/original")
+    async def avatar_original(self, request):
+        """
+        Unbeschnittenes Original des eigenen Avatars, zum erneuten Zuschneiden.
+
+        Nur über diesen Endpunkt: /media/avatars/originals/ ist gesperrt,
+        weil das Original mehr zeigt als der Zuschnitt, den das Mitglied
+        für das Verzeichnis gewählt hat.
+        """
+        profile = await aget_or_create_profile(request.user)
+        if not profile.avatar_original:
+            raise NotFound("Исходное фото не загружено.")
+        name = profile.avatar_original.name
+        try:
+            handle, size = await sync_to_async(_open_with_size)(
+                profile.avatar_original.storage, name
+            )
+        except FileNotFoundError as exc:
+            raise NotFound("Исходное фото не загружено.") from exc
+        content_type = mimetypes.guess_type(name)[0] or DEFAULT_IMAGE_CONTENT_TYPE
+        # Async-Iterator statt der Datei selbst: Unter ASGI liest Django einen
+        # synchronen Iterator per sync_to_async(list) komplett in den Speicher
+        # – das Streaming wäre damit wirkungslos.
+        response = FileResponse(_aiter_file_chunks(handle), content_type=content_type)
+        response["Content-Length"] = str(size)
+        # private/no-store: Ein geteilter Cache (Proxy) soll das Bild weder
+        # ablegen noch einem anderen Nutzer ausliefern.
+        response["Cache-Control"] = "private, no-store"
+        return response
+
+
+def _open_with_size(storage, name: str) -> tuple[File, int]:
+    handle = storage.open(name, "rb")
+    return handle, handle.size
+
+
+async def _aiter_file_chunks(handle: File) -> AsyncIterator[bytes]:
+    """
+    Liest die geöffnete Datei blockweise im Thread und schließt sie danach.
+    """
+    try:
+        while chunk := await sync_to_async(handle.read)(FileResponse.block_size):
+            yield chunk
+    finally:
+        await sync_to_async(handle.close)()
 
 
 class MemberProfileViewSet(
@@ -234,6 +333,6 @@ class MemberProfileViewSet(
         contact = await sync_to_async(_create_contact)()
         await sync_to_async(send_contact_request_email.delay)(contact.pk)
         return Response(
-            {"detail": "Kontaktanfrage wurde gesendet.", "id": contact.pk},
+            {"detail": "Запрос на контакт отправлен.", "id": contact.pk},
             status=status.HTTP_201_CREATED,
         )

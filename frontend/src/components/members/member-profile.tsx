@@ -39,7 +39,6 @@ export function MemberProfileView({
           {member.avatarUrl ? (
             <CroppedAvatar
               src={member.avatarUrl}
-              originalSrc={member.avatarOriginalUrl}
               width={128}
               height={128}
               fetchPriority="high"

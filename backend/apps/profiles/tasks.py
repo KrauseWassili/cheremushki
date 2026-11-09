@@ -10,6 +10,16 @@ from .models import ContactRequest, ContactRequestStatus
 logger = logging.getLogger(__name__)
 
 
+def _build_contact_request_text(*, to_user, from_user, message: str) -> str:
+    text = (
+        f"Здравствуй, {to_user.first_name}!\n\n"
+        f"{from_user.full_name} ({from_user.email}) хочет связаться с тобой.\n\n"
+    )
+    if message:
+        text += f"Сообщение:\n{message}\n\n"
+    return text + "Чтобы ответить, просто ответь на это письмо.\n"
+
+
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
 def send_contact_request_email(self, contact_request_id: int):
     try:
@@ -36,13 +46,15 @@ def send_contact_request_email(self, contact_request_id: int):
     # eines danebenliegenden Fehlers.
     try:
         send_email(
-            subject=f"Kontaktanfrage von {from_user.full_name}",
-            message=(
-                f"{from_user.full_name} ({from_user.email}) möchte Kontakt "
-                f"mit dir aufnehmen.\n\n{contact.message}"
+            subject=f"Запрос на контакт от {from_user.full_name}",
+            message=_build_contact_request_text(
+                to_user=to_user, from_user=from_user, message=contact.message
             ),
             html_message=html_message,
             to=to_user.email,
+            # Antworten gehen direkt an das anfragende Mitglied, nicht an die
+            # (nicht überwachte) Absenderadresse des Clubs.
+            reply_to=from_user.email,
         )
     except ResendError as exc:
         contact.status = ContactRequestStatus.FAILED

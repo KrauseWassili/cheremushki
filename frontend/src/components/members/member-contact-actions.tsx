@@ -107,7 +107,7 @@ export function MemberContactActions({
                   <TextArea
                     value={requestText}
                     onChange={(event) => setRequestText(event.target.value)}
-                    placeholder={`Коротко напишите, зачем хотите связаться с ${member.fullName}`}
+                    placeholder={`Коротко напиши, зачем хочешь связаться с ${member.fullName}`}
                     className="mt-5 min-h-36"
                   />
 
