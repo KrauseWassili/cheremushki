@@ -1,15 +1,20 @@
+import importlib.util
+import os
 import re
 import tempfile
 from pathlib import Path
 from unittest import mock
 
+from asgiref.sync import async_to_sync
 from django.conf import settings
+from django.core.checks import run_checks
 from django.http import HttpResponse
 from django.test import RequestFactory, SimpleTestCase, TestCase, override_settings
 from django.urls import get_resolver
 from django.utils import translation
 from rest_framework.test import APIClient
 
+from config.checks import check_secret_key
 from config.middleware import admin_language_middleware
 from config.views import public_media
 
@@ -199,6 +204,10 @@ class AreaLanguageIntegrationTests(TestCase):
         )
 
 
+async def collect_async_stream(response) -> bytes:
+    return b"".join([chunk async for chunk in response.streaming_content])
+
+
 def media_route():
     for pattern in get_resolver().url_patterns:
         if getattr(pattern, "callback", None) is public_media:
@@ -225,6 +234,11 @@ class MediaRouteTests(SimpleTestCase):
     """
 
     SECRET = b"SECRET_KEY=nicht-ausliefern"
+    LEGACY = b"\xff\xd8\xff-altlast-mit-exif"
+    CURRENT = b"\xff\xd8\xff-aktueller-avatar"
+    # 2023-11-14 22:13:20 UTC – feste mtime statt echter Uhrzeit.
+    MTIME = 1_700_000_000
+    MTIME_HTTP = "Tue, 14 Nov 2023 22:13:20 GMT"
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -238,6 +252,16 @@ class MediaRouteTests(SimpleTestCase):
             b"\x89PNG-original"
         )
         (outer / "settings.py").write_bytes(self.SECRET)
+        # Altlasten im alten, per User-ID erratbaren Schema.
+        for legacy in (
+            "avatars/user-1.jpg",
+            "avatars/user-1_AbC.jpg",
+            "avatars/originals/user-1.jpg",
+        ):
+            (self.media_root / legacy).write_bytes(self.LEGACY)
+        self.current = self.media_root / "avatars" / f"{'a' * 32}.jpg"
+        self.current.write_bytes(self.CURRENT)
+        os.utime(self.current, (self.MTIME, self.MTIME))
 
         patcher = mock.patch.dict(
             media_route().default_args, {"document_root": str(self.media_root)}
@@ -251,9 +275,11 @@ class MediaRouteTests(SimpleTestCase):
         return response
 
     def body(self, response) -> bytes:
-        if response.streaming:
-            return b"".join(response.streaming_content)
-        return response.content
+        if not response.streaming:
+            return response.content
+        if response.is_async:
+            return async_to_sync(collect_async_stream)(response)
+        return b"".join(response.streaming_content)
 
     def test_media_existing_file_is_served_without_debug(self):
         response = self.get("/media/avatars/anna.png")
@@ -299,6 +325,144 @@ class MediaRouteTests(SimpleTestCase):
                 response = self.get(path)
                 self.assertEqual(response.status_code, 404)
                 self.assertNotIn(b"PNG-original", self.body(response))
+
+    def test_media_legacy_avatar_names_are_never_served(self):
+        for path in (
+            "/media/avatars/user-1.jpg",
+            "/media/avatars/user-1_AbC.jpg",
+            "/media/avatars/originals/user-1.jpg",
+            "/media/avatars/./user-1.jpg",
+            "/media/avatars//user-1.jpg",
+        ):
+            with self.subTest(path=path):
+                response = self.get(path)
+                self.assertEqual(response.status_code, 404)
+                self.assertNotIn(b"altlast", self.body(response))
+
+    def test_media_current_avatar_is_streamed_with_cache_headers(self):
+        response = self.get(f"/media/avatars/{'a' * 32}.jpg")
+
+        self.assertEqual(response.status_code, 200)
+        # Async-Iterator statt Datei: unter ASGI blockweise gestreamt.
+        self.assertTrue(response.streaming)
+        self.assertTrue(response.is_async)
+        self.assertEqual(response["Content-Type"], "image/jpeg")
+        self.assertEqual(response["Content-Length"], str(len(self.CURRENT)))
+        self.assertEqual(response["Last-Modified"], self.MTIME_HTTP)
+        self.assertEqual(self.body(response), self.CURRENT)
+
+    def test_media_if_modified_since_unchanged_returns_304(self):
+        response = self.client.get(
+            f"/media/avatars/{'a' * 32}.jpg", HTTP_IF_MODIFIED_SINCE=self.MTIME_HTTP
+        )
+        self.addCleanup(response.close)
+
+        self.assertEqual(response.status_code, 304)
+        self.assertEqual(response.content, b"")
+
+    def test_media_if_modified_since_older_returns_200(self):
+        response = self.client.get(
+            f"/media/avatars/{'a' * 32}.jpg",
+            HTTP_IF_MODIFIED_SINCE="Mon, 13 Nov 2023 00:00:00 GMT",
+        )
+        self.addCleanup(response.close)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.body(response), self.CURRENT)
+
+    def test_media_subdirectory_is_404(self):
+        for path in ("/media/avatars/originals", "/media/avatars/."):
+            with self.subTest(path=path):
+                self.assertEqual(self.get(path).status_code, 404)
+
+
+# Zufallswert, 64 Zeichen, ohne Platzhalter-Teilstrings.
+STRONG_SECRET_KEY = "q7Vf2LpX9sRk4TnB8wZc1HyJ6mQd3GaE5uYo0iKbNlPrStUvWxZaBcDeFgHjKmNp"
+
+
+class SecretKeyCheckTests(SimpleTestCase):
+    @staticmethod
+    def config_error_ids(messages) -> list[str]:
+        return [m.id for m in messages if m.id and m.id.startswith("config.")]
+
+    def test_secret_key_check_rejects_weak_values_without_debug(self):
+        for value in (
+            "TODO_SET_ME",
+            "kurz",
+            "a" * 49,
+            "django-insecure-" + "x" * 50,
+            "changeme-" + "x" * 50,
+            "  secret  ",
+        ):
+            with self.subTest(value=value):
+                with override_settings(DEBUG=False, SECRET_KEY=value):
+                    self.assertEqual(
+                        self.config_error_ids(check_secret_key(None)), ["config.E001"]
+                    )
+
+    @override_settings(DEBUG=True, SECRET_KEY="TODO_SET_ME")
+    def test_secret_key_check_is_silent_with_debug(self):
+        self.assertEqual(check_secret_key(None), [])
+
+    @override_settings(DEBUG=False, SECRET_KEY=STRONG_SECRET_KEY)
+    def test_secret_key_check_accepts_strong_value(self):
+        self.assertEqual(check_secret_key(None), [])
+
+    @override_settings(DEBUG=False, SECRET_KEY="a" * 50)
+    def test_secret_key_check_accepts_exactly_min_length(self):
+        # MIN_SECRET_KEY_LENGTH = 50, Grenze inklusive.
+        self.assertEqual(check_secret_key(None), [])
+
+    @override_settings(DEBUG=False, SECRET_KEY="TODO_SET_ME")
+    def test_secret_key_check_runs_only_as_deploy_check(self):
+        self.assertEqual(
+            self.config_error_ids(run_checks(include_deployment_checks=False)), []
+        )
+        self.assertEqual(
+            self.config_error_ids(run_checks(include_deployment_checks=True)),
+            ["config.E001"],
+        )
+
+
+def load_settings_with_debug(debug: str):
+    """
+    Führt config/settings.py als eigenes Modul mit gesetztem DEBUG aus.
+
+    SESSION_/CSRF_COOKIE_SECURE werden beim Import aus DEBUG abgeleitet;
+    override_settings(DEBUG=…) ändert sie nicht. Das Modul landet nicht in
+    sys.modules und berührt django.conf.settings nicht. os.environ hat
+    Vorrang vor der .env (read_env überschreibt nicht).
+    """
+    spec = importlib.util.spec_from_file_location(
+        f"config._settings_probe_{debug.lower()}",
+        Path(__file__).resolve().parent / "settings.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    env = {
+        "DEBUG": debug,
+        # Ohne Cache-URL bricht settings.py mit DEBUG=False ab; verbunden
+        # wird hier nicht.
+        "DJANGO_CACHE_URL": "redis://cache.invalid:6379/0",
+    }
+    with mock.patch.dict(os.environ, env):
+        spec.loader.exec_module(module)
+    return module
+
+
+class SecureCookieSettingsTests(SimpleTestCase):
+    def test_cookies_are_secure_without_debug(self):
+        module = load_settings_with_debug("False")
+        self.assertFalse(module.DEBUG)
+        self.assertTrue(module.SESSION_COOKIE_SECURE)
+        self.assertTrue(module.CSRF_COOKIE_SECURE)
+
+    def test_cookies_are_not_secure_with_debug(self):
+        # Dev-Stack läuft über http – Secure-Cookies würden den Admin-Login
+        # dort unmöglich machen.
+        module = load_settings_with_debug("True")
+        self.assertTrue(module.DEBUG)
+        self.assertFalse(module.SESSION_COOKIE_SECURE)
+        self.assertFalse(module.CSRF_COOKIE_SECURE)
 
 
 class HealthzTests(SimpleTestCase):

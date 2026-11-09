@@ -1,14 +1,16 @@
 import io
+import os
 import shutil
+import struct
 import tempfile
 from unittest import mock
 
-from asgiref.sync import async_to_sync
+from asgiref.sync import async_to_sync, sync_to_async
 from django.core.cache import cache
 from django.core.files.base import ContentFile
-from django.core.files.storage import default_storage
+from django.core.files.storage import FileSystemStorage, default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.core.management import call_command
+from django.core.management import CommandError, call_command
 from django.apps import apps as global_apps
 from django.db import connection, transaction
 from django.db.migrations.executor import MigrationExecutor
@@ -33,9 +35,11 @@ from .avatar_files import (
     MAX_AVATAR_EDGE,
     MAX_AVATAR_PIXELS,
     MAX_AVATAR_UPLOAD_BYTES,
+    UNSUPPORTED_FORMAT_MESSAGE,
     InvalidAvatarImage,
     strip_image_metadata,
 )
+from . import views as profile_views
 from .hashtags import (
     MAX_HASHTAG_LENGTH,
     InvalidHashtag,
@@ -105,6 +109,14 @@ REJECTED = [
 
 # --- Von Telegram heute wird nicht mehr vergeben. --- #
 LEGACY_SHAPES = ["12345", "_durov", "durov_", "du__rov"]
+
+# Wie in accounts/tests.py: cache.clear() darf nie den echten Redis leeren.
+LOCMEM_CACHE = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "profiles-tests",
+    }
+}
 
 
 class ParseTelegramUsernameTests(SimpleTestCase):
@@ -1482,14 +1494,16 @@ class StripImageMetadataTests(SimpleTestCase):
             self.assertEqual(rgba.getpixel((0, 0))[3], 0)
             self.assertEqual(rgba.getpixel((1, 1)), (255, 0, 0, 255))
 
-    def test_strip_image_metadata_converts_gif_to_jpeg(self):
+    def test_strip_image_metadata_rejects_gif(self):
+        # Nicht mehr auf der Allowlist (früher als JPEG neu geschrieben).
         source = image_bytes((4, 4), mode="P", color=1, image_format="GIF")
 
-        cleaned = strip_image_metadata(io.BytesIO(source))
+        with self.assertRaises(InvalidAvatarImage) as ctx:
+            strip_image_metadata(io.BytesIO(source))
 
-        self.assertEqual(cleaned.name, "avatar.jpg")
-        with opened(cleaned) as result:
-            self.assertEqual(result.format, "JPEG")
+        self.assertEqual(
+            ctx.exception.user_message, "Поддерживаются только JPEG, PNG и WebP."
+        )
 
     def test_strip_image_metadata_keeps_webp_format(self):
         source = image_bytes((4, 4), image_format="WEBP")
@@ -1499,7 +1513,7 @@ class StripImageMetadataTests(SimpleTestCase):
     def test_strip_image_metadata_rejects_non_image(self):
         with self.assertRaises(InvalidAvatarImage) as ctx:
             strip_image_metadata(io.BytesIO(b"%PDF-1.4 kein Bild"))
-        self.assertIn("JPG, PNG или WebP", ctx.exception.user_message)
+        self.assertIn("JPEG, PNG и WebP", ctx.exception.user_message)
 
     def test_strip_image_metadata_rejects_empty_file(self):
         with self.assertRaises(InvalidAvatarImage):
@@ -1510,6 +1524,7 @@ AVATAR_URL = "/api/v1/profiles/user/me/avatar/"
 AVATAR_ORIGINAL_URL = "/api/v1/profiles/user/me/avatar/original/"
 
 
+@override_settings(CACHES=LOCMEM_CACHE)
 class AvatarUploadTestBase(TempMediaRootMixin, TestCase):
     def setUp(self):
         super().setUp()
@@ -1862,7 +1877,7 @@ def mean_color(data: bytes) -> tuple[int, ...]:
         return image.convert("RGB").resize((1, 1)).getpixel((0, 0))
 
 
-class CleanupLegacyAvatarsTests(TempMediaRootMixin, TestCase):
+class CleanupLegacyAvatarsTestBase(TempMediaRootMixin, TestCase):
     def setUp(self):
         super().setUp()
         self.invite_delay = mock.patch(
@@ -1894,6 +1909,8 @@ class CleanupLegacyAvatarsTests(TempMediaRootMixin, TestCase):
             call_command("cleanup_legacy_avatars", *args, stdout=out)
         return out.getvalue()
 
+
+class CleanupLegacyAvatarsTests(CleanupLegacyAvatarsTestBase):
     def test_cleanup_rewrites_referenced_legacy_file_without_exif(self):
         old_avatar = save_exact(f"{AVATAR_DIR}/user-1.jpg", legacy_jpeg())
         old_original = save_exact(
@@ -1985,6 +2002,9 @@ class CleanupLegacyAvatarsTests(TempMediaRootMixin, TestCase):
             self.assertLess(r, 60)
 
     def test_cleanup_clears_dead_references_without_side_effects(self):
+        # Irgendeine Datei im Verzeichnis, sonst greift der Riegel gegen ein
+        # fehlendes Media-Volume.
+        save_exact(f"{AVATAR_DIR}/{'d' * 32}.jpg", legacy_jpeg())
         profile = self.make_profile(
             "anna@example.com",
             visible=True,
@@ -1992,7 +2012,7 @@ class CleanupLegacyAvatarsTests(TempMediaRootMixin, TestCase):
             avatar_original=f"{AVATAR_ORIGINALS_DIR}/user-3.jpg",
         )
 
-        output = self.run_cleanup()
+        output = self.run_cleanup("--clear-missing", "--force")
 
         profile.refresh_from_db()
         self.assertFalse(profile.avatar)
@@ -2068,17 +2088,458 @@ class CleanupLegacyAvatarsTests(TempMediaRootMixin, TestCase):
         self.assertEqual(self.storage_names(), files_after_first)
         self.assertIn(
             "Avatar-Altlasten: 0 Verweise geleert, 0 Dateien umgeschrieben, "
-            "0 gelöscht, 0 nicht lesbar.",
+            "0 unverändert verschoben, 0 gelöscht, 0 Fehler, "
+            "1 tote Verweise gefunden.",
             output,
         )
 
-    def test_cleanup_leaves_unreadable_legacy_file_in_place(self):
+    def test_cleanup_moves_unreadable_legacy_file_to_random_name(self):
         broken = save_exact(f"{AVATAR_DIR}/user-4.jpg", b"kein Bild")
         profile = self.make_profile("anna@example.com", avatar=broken)
 
         output = self.run_cleanup()
 
         profile.refresh_from_db()
-        self.assertEqual(profile.avatar.name, broken)
-        self.assertTrue(default_storage.exists(broken))
-        self.assertIn(f"Nicht lesbar, unverändert gelassen: {broken}", output)
+        self.assertRegex(profile.avatar.name, r"^avatars/[0-9a-f]{32}\.jpg$")
+        with profile.avatar.open("rb") as handle:
+            self.assertEqual(handle.read(), b"kein Bild")
+        self.assertFalse(default_storage.exists(broken))
+        self.assertIn(
+            f"Nicht lesbar, unverändert verschoben: {broken} -> {profile.avatar.name}",
+            output,
+        )
+
+
+# --- Cleanup: Riegel gegen fehlendes Media-Volume und tote Verweise ------ #
+
+
+def random_avatar_name(char: str, *, ext: str = "jpg") -> str:
+    """Name im aktuellen Schema (32 Hex-Zeichen), kein Altlast-Name."""
+    return f"{AVATAR_DIR}/{char * 32}.{ext}"
+
+
+class CleanupLegacyAvatarsGuardTests(CleanupLegacyAvatarsTestBase):
+    def profile_rows(self) -> list[dict]:
+        return list(
+            MemberProfile.objects.order_by("pk").values(
+                "pk", "avatar", "avatar_original", "is_directory_visible"
+            )
+        )
+
+    def assert_aborted_without_changes(self, *args) -> None:
+        rows_before = self.profile_rows()
+        files_before = self.storage_names()
+
+        with self.assertRaises(CommandError):
+            self.run_cleanup(*args)
+
+        self.assertEqual(self.profile_rows(), rows_before)
+        self.assertEqual(self.storage_names(), files_before)
+
+    def test_cleanup_aborts_when_avatar_directory_is_missing(self):
+        # Verweise in der DB, aber MEDIA_ROOT/avatars existiert gar nicht –
+        # typisch für ein nicht gemountetes Volume.
+        self.make_profile(
+            "anna@example.com", visible=True, avatar=random_avatar_name("a")
+        )
+        self.make_profile("boris@example.com", avatar=f"{AVATAR_DIR}/user-2.jpg")
+
+        for args in ((), ("--clear-missing",), ("--clear-missing", "--force")):
+            with self.subTest(args=args):
+                self.assert_aborted_without_changes(*args)
+
+    def test_cleanup_aborts_when_avatar_directory_is_empty(self):
+        os.makedirs(default_storage.path(AVATAR_ORIGINALS_DIR))
+        self.make_profile(
+            "anna@example.com", visible=True, avatar=random_avatar_name("a")
+        )
+
+        for args in ((), ("--clear-missing", "--force")):
+            with self.subTest(args=args):
+                self.assert_aborted_without_changes(*args)
+
+    def test_cleanup_without_references_and_files_is_a_no_op(self):
+        # Kein Verweis → kein Riegel (frische Installation).
+        output = self.run_cleanup("--clear-missing")
+        self.assertIn("0 tote Verweise gefunden.", output)
+
+    def test_cleanup_aborts_clear_missing_above_ratio_without_force(self):
+        # 1 von 2 Verweisen tot = 50 % > 20 %.
+        self.make_profile(
+            "anna@example.com",
+            visible=True,
+            avatar=save_exact(random_avatar_name("a"), legacy_jpeg()),
+        )
+        self.make_profile(
+            "boris@example.com", visible=True, avatar=random_avatar_name("b")
+        )
+
+        self.assert_aborted_without_changes("--clear-missing")
+
+    def test_cleanup_clears_above_ratio_with_force(self):
+        self.make_profile(
+            "anna@example.com",
+            visible=True,
+            avatar=save_exact(random_avatar_name("a"), legacy_jpeg()),
+        )
+        dead = self.make_profile(
+            "boris@example.com", visible=True, avatar=random_avatar_name("b")
+        )
+
+        output = self.run_cleanup("--clear-missing", "--force")
+
+        dead.refresh_from_db()
+        self.assertFalse(dead.avatar)
+        self.assertFalse(dead.is_directory_visible)
+        self.assertIn(
+            f"Profil {dead.pk}: avatar zeigt auf fehlende Datei, geleert.", output
+        )
+
+    def test_cleanup_clears_exactly_at_ratio_without_force(self):
+        # 1 von 5 Verweisen tot = genau 20 % → noch plausibel, kein --force nötig.
+        for index, char in enumerate("acde"):
+            self.make_profile(
+                f"p{index}@example.com",
+                avatar=save_exact(random_avatar_name(char), legacy_jpeg()),
+            )
+        dead = self.make_profile("boris@example.com", avatar=random_avatar_name("b"))
+
+        self.run_cleanup("--clear-missing")
+
+        dead.refresh_from_db()
+        self.assertFalse(dead.avatar)
+
+    def test_cleanup_without_clear_missing_keeps_dead_reference(self):
+        save_exact(random_avatar_name("a"), legacy_jpeg())
+        dead_name = random_avatar_name("b")
+        dead = self.make_profile("boris@example.com", visible=True, avatar=dead_name)
+
+        output = self.run_cleanup()
+
+        dead.refresh_from_db()
+        self.assertEqual(dead.avatar.name, dead_name)
+        self.assertTrue(dead.is_directory_visible)
+        self.assertIn(
+            f"Profil {dead.pk}: avatar zeigt auf fehlende Datei, "
+            "nicht geleert (dafür --clear-missing).",
+            output,
+        )
+
+
+class CleanupLegacyAvatarsPerFileTests(CleanupLegacyAvatarsTestBase):
+    def test_cleanup_reference_outside_media_root_is_reported_and_run_continues(self):
+        evil = self.make_profile("eve@example.com")
+        MemberProfile.objects.filter(pk=evil.pk).update(avatar="../geheim.jpg")
+        legacy = self.make_profile(
+            "anna@example.com",
+            avatar=save_exact(f"{AVATAR_DIR}/user-1.jpg", legacy_jpeg()),
+        )
+
+        output = self.run_cleanup("--clear-missing", "--force")
+
+        evil.refresh_from_db()
+        legacy.refresh_from_db()
+        self.assertEqual(evil.avatar.name, "../geheim.jpg")
+        self.assertIn("Fehler, unverändert: ../geheim.jpg", output)
+        # Der Lauf ging weiter: Die Altdatei des anderen Profils ist umgeschrieben.
+        self.assertRegex(legacy.avatar.name, r"^avatars/[0-9a-f]{32}\.jpg$")
+
+    def test_cleanup_moves_gif_legacy_file_unchanged_and_deletes_old_after_commit(self):
+        # GIF ist nicht auf der Allowlist → nicht umschreibbar, aber auch
+        # nicht unter dem erratbaren Namen liegen lassen.
+        gif = image_bytes((4, 4), mode="P", color=1, image_format="GIF")
+        old_name = save_exact(f"{AVATAR_DIR}/user-5.gif", gif)
+        profile = self.make_profile("anna@example.com", avatar=old_name)
+
+        out = io.StringIO()
+        # Löschschritt für Unreferenziertes aus wie in
+        # test_cleanup_deletes_old_file_only_after_commit.
+        with mock.patch(
+            "apps.profiles.legacy_avatars._delete_unreferenced_legacy_files"
+        ):
+            with self.captureOnCommitCallbacks(execute=False) as callbacks:
+                call_command("cleanup_legacy_avatars", stdout=out)
+            self.assertTrue(default_storage.exists(old_name))
+            for callback in callbacks:
+                callback()
+
+        profile.refresh_from_db()
+        self.assertRegex(profile.avatar.name, r"^avatars/[0-9a-f]{32}\.[a-z]+$")
+        with profile.avatar.open("rb") as handle:
+            self.assertEqual(handle.read(), gif)
+        self.assertFalse(default_storage.exists(old_name))
+        self.assertIn(
+            f"Nicht lesbar, unverändert verschoben: {old_name} -> {profile.avatar.name}",
+            out.getvalue(),
+        )
+
+    def test_cleanup_storage_write_error_keeps_reference(self):
+        old_name = save_exact(f"{AVATAR_DIR}/user-1.jpg", legacy_jpeg())
+        profile = self.make_profile("anna@example.com", avatar=old_name)
+
+        with mock.patch.object(
+            FileSystemStorage, "_save", side_effect=OSError("Platte voll")
+        ):
+            output = self.run_cleanup()
+
+        profile.refresh_from_db()
+        self.assertEqual(profile.avatar.name, old_name)
+        self.assertTrue(default_storage.exists(old_name))
+        self.assertIn(f"Fehler, unverändert: {old_name}", output)
+        self.assertIn("0 Dateien umgeschrieben", output)
+
+    def test_cleanup_storage_read_error_keeps_reference(self):
+        old_name = save_exact(f"{AVATAR_DIR}/user-1.jpg", legacy_jpeg())
+        profile = self.make_profile("anna@example.com", avatar=old_name)
+
+        with mock.patch.object(
+            FileSystemStorage, "open", side_effect=PermissionError("kein Zugriff")
+        ):
+            output = self.run_cleanup()
+
+        profile.refresh_from_db()
+        self.assertEqual(profile.avatar.name, old_name)
+        self.assertTrue(default_storage.exists(old_name))
+        self.assertIn(f"Fehler, unverändert: {old_name}", output)
+
+
+# --- Upload: Format-Allowlist, Pillow-Fehler, Rollback ------------------- #
+
+DEFAULT_INVALID_IMAGE_FRAGMENT = "Не удалось обработать изображение"
+
+
+class AvatarUploadFormatTests(AvatarUploadTestBase):
+    def post_avatar(self, content: bytes, name: str = "avatar.png"):
+        upload = SimpleUploadedFile(name, content, content_type="image/png")
+        return self.client.post(AVATAR_URL, {"avatar": upload}, format="multipart")
+
+    def assert_rejected(self, response, message_fragment: str) -> None:
+        self.assertEqual(response.status_code, 400)
+        messages = [str(m) for m in response.data["avatar"]]
+        self.assertEqual(len(messages), 1)
+        self.assertIn(message_fragment, messages[0])
+        self.assertEqual(self.storage_names(), set())
+        self.invite_delay.assert_not_called()
+
+    def test_avatar_upload_rejects_foreign_formats_before_pillow(self):
+        # Signaturprüfung vor jedem Parser: Pillow darf die Datei nie sehen,
+        # auch wenn der Name .png behauptet.
+        for image_format in ("GIF", "BMP", "TIFF"):
+            with self.subTest(image_format=image_format):
+                content = image_bytes((4, 4), image_format=image_format)
+                with mock.patch("PIL.Image.open", wraps=Image.open) as image_open:
+                    response = self.post_avatar(content)
+
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(
+                    [str(m) for m in response.data["avatar"]],
+                    [UNSUPPORTED_FORMAT_MESSAGE],
+                )
+                self.assertEqual(
+                    UNSUPPORTED_FORMAT_MESSAGE,
+                    "Поддерживаются только JPEG, PNG и WebP.",
+                )
+                image_open.assert_not_called()
+
+    def test_avatar_upload_accepts_webp(self):
+        response = self.post_avatar(
+            image_bytes((4, 4), image_format="WEBP"), name="avatar.webp"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.profile.refresh_from_db()
+        self.assertRegex(self.profile.avatar.name, r"^avatars/[0-9a-f]{32}\.webp$")
+        with self.profile.avatar.open("rb") as handle, Image.open(handle) as image:
+            self.assertEqual(image.format, "WEBP")
+
+    def test_avatar_upload_rejects_crafted_files_with_400(self):
+        jpeg = image_bytes((64, 64), image_format="JPEG")
+        crafted = {
+            "png_signature_garbage": b"\x89PNG\r\n\x1a\n" + b"\x00" * 64,
+            "jpeg_signature_garbage": b"\xff\xd8\xff" + b"\x13" * 64,
+            "webp_signature_garbage": b"RIFF\x10\x00\x00\x00WEBP" + b"\x00" * 32,
+            "truncated_jpeg": jpeg[: len(jpeg) // 2],
+        }
+        for label, content in crafted.items():
+            with self.subTest(label):
+                response = self.post_avatar(content)
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("avatar", response.data)
+                self.assertEqual(self.storage_names(), set())
+
+    def test_avatar_upload_maps_pillow_decode_errors_to_400(self):
+        # Parserfehler einzelner Pillow-Plugins sind keine OSError – ohne
+        # vollständige Liste würde daraus ein 500.
+        for error in (
+            ValueError("kaputt"),
+            EOFError(),
+            struct.error("kaputt"),
+            SyntaxError("kaputt"),
+            IndexError("kaputt"),
+        ):
+            with self.subTest(error=type(error).__name__):
+                with mock.patch(
+                    "apps.profiles.avatar_files.ImageOps.exif_transpose",
+                    side_effect=error,
+                ):
+                    response = self.upload()
+                self.assert_rejected(response, DEFAULT_INVALID_IMAGE_FRAGMENT)
+
+    def test_avatar_upload_maps_pillow_encode_error_to_400(self):
+        # Upload vor dem Patch bauen – image_upload() kodiert selbst mit save().
+        payload = {"avatar": image_upload()}
+        with mock.patch.object(
+            Image.Image, "save", side_effect=ValueError("encoder kaputt")
+        ):
+            response = self.client.post(AVATAR_URL, payload, format="multipart")
+        self.assert_rejected(response, DEFAULT_INVALID_IMAGE_FRAGMENT)
+
+    def test_avatar_upload_too_many_pixels_keeps_specific_message(self):
+        # 4001 × 4000 = 16 004 000 Pixel > 16 MP; einfarbig, also winzige Datei.
+        content = image_bytes((4001, 4000), mode="L", color=0)
+        self.assertLess(len(content), MAX_AVATAR_UPLOAD_BYTES)
+
+        response = self.post_avatar(content)
+
+        self.assert_rejected(response, "слишком большое")
+        self.assertIn("16 мегапикселей", str(response.data["avatar"][0]))
+
+    def test_avatar_upload_rejects_more_than_two_files(self):
+        # DATA_UPLOAD_MAX_NUMBER_FILES = 2: Avatar + Original, nicht mehr.
+        response = self.client.post(
+            AVATAR_URL,
+            {
+                "avatar": image_upload(),
+                "avatar_original": image_upload("orig.png"),
+                "extra": image_upload("extra.png"),
+            },
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.profile.refresh_from_db()
+        self.assertFalse(self.profile.avatar)
+        self.assertEqual(self.storage_names(), set())
+
+
+class AvatarUploadRollbackTests(AvatarUploadTestBase):
+    def test_avatar_upload_failure_after_write_removes_new_files(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            with mock.patch.object(
+                MemberProfile,
+                "refresh_directory_visibility",
+                side_effect=RuntimeError("DB weg"),
+            ):
+                with self.assertRaises(RuntimeError):
+                    self.upload(
+                        avatar_original=image_upload("orig.png"), avatar_scale="2.0"
+                    )
+
+        # Beide Dateien waren schon geschrieben – ohne Aufräumen lägen sie
+        # verwaist unter einer gültigen /media/-URL.
+        self.assertEqual(self.storage_names(), set())
+        self.profile.refresh_from_db()
+        self.assertFalse(self.profile.avatar)
+        self.assertFalse(self.profile.avatar_original)
+        self.assertEqual(self.profile.avatar_scale, 1.0)
+        self.invite_delay.assert_not_called()
+
+    def test_avatar_upload_failing_second_write_removes_first_file(self):
+        real_save = FileSystemStorage._save
+        calls = []
+
+        def fail_on_second(storage, name, content):
+            calls.append(name)
+            if len(calls) == 2:
+                raise OSError("Platte voll")
+            return real_save(storage, name, content)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            with mock.patch.object(
+                FileSystemStorage, "_save", autospec=True, side_effect=fail_on_second
+            ):
+                with self.assertRaises(OSError):
+                    self.upload(avatar_original=image_upload("orig.png"))
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(self.storage_names(), set())
+        self.profile.refresh_from_db()
+        self.assertFalse(self.profile.avatar)
+
+
+# --- PATCH /me/: keine verlorenen Avatar-Wechsel, Invite-Flanke ---------- #
+
+PROFILE_ME_URL = "/api/v1/profiles/user/me/"
+
+
+class ProfilePatchConcurrencyTests(AvatarUploadTestBase):
+    def test_patch_does_not_revert_concurrent_avatar_change(self):
+        """
+        Ein Upload schreibt einen neuen Avatar, nachdem der PATCH das Profil
+        geladen hat. Der PATCH darf den alten Verweis nicht zurückschreiben.
+        """
+        self.assertEqual(self.upload().status_code, 200)
+        concurrent_name = random_avatar_name("e", ext="png")
+        real_load = profile_views.aget_or_create_profile
+
+        async def load_then_concurrent_upload(user):
+            profile = await real_load(user)
+            await sync_to_async(MemberProfile.objects.filter(pk=profile.pk).update)(
+                avatar=concurrent_name
+            )
+            return profile
+
+        with mock.patch.object(
+            profile_views,
+            "aget_or_create_profile",
+            side_effect=load_then_concurrent_upload,
+        ):
+            response = self.client.patch(
+                PROFILE_ME_URL, {"city": "Hamburg"}, format="json"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.avatar.name, concurrent_name)
+        self.assertEqual(self.profile.city, "Hamburg")
+
+    def test_patch_never_writes_avatar_fields(self):
+        self.assertEqual(self.upload().status_code, 200)
+        real_save = MemberProfile.save
+        update_fields_seen = []
+
+        def spy_save(profile, *args, **kwargs):
+            update_fields_seen.append(kwargs.get("update_fields"))
+            return real_save(profile, *args, **kwargs)
+
+        with mock.patch.object(
+            MemberProfile, "save", autospec=True, side_effect=spy_save
+        ):
+            response = self.client.patch(
+                PROFILE_ME_URL,
+                {"city": "Hamburg", "bio": "", "headline": "Neu"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(update_fields_seen)
+        for update_fields in update_fields_seen:
+            # Kein voller save(): der würde avatar/avatar_original mitschreiben.
+            self.assertIsNotNone(update_fields)
+            self.assertNotIn("avatar", update_fields)
+            self.assertNotIn("avatar_original", update_fields)
+
+    def test_patch_completing_profile_sends_invite_exactly_once(self):
+        MemberProfile.objects.filter(pk=self.profile.pk).update(bio="")
+        self.assertEqual(self.upload().status_code, 200)
+        self.invite_delay.assert_not_called()
+        self.sync_post.reset_mock()
+
+        first = self.client.patch(PROFILE_ME_URL, {"bio": "Über mich"}, format="json")
+        second = self.client.patch(PROFILE_ME_URL, {"bio": "Noch mehr"}, format="json")
+
+        self.assertEqual(first.status_code, 200)
+        self.assertTrue(first.data["directory_ready"])
+        self.assertEqual(second.status_code, 200)
+        self.invite_delay.assert_called_once_with(self.user.pk)
+        self.assertEqual(self.sync_post.call_count, 2)

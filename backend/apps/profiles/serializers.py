@@ -1,6 +1,7 @@
 from adrf import serializers
 from asgiref.sync import sync_to_async
 from django.core.files.base import ContentFile
+from django.db import transaction
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers as drf_serializers
 from rest_framework.exceptions import ValidationError
@@ -10,7 +11,10 @@ from apps.bot.tasks.profile_post import sync_telegram_profile_post
 
 from .avatar_files import (
     MAX_AVATAR_UPLOAD_BYTES,
+    SIGNATURE_PROBE_BYTES,
+    UNSUPPORTED_FORMAT_MESSAGE,
     InvalidAvatarImage,
+    has_allowed_image_signature,
     strip_image_metadata,
 )
 from .hashtags import InvalidHashtag, parse_hashtag
@@ -264,15 +268,30 @@ class MemberProfileSerializer(serializers.ModelSerializer):
         tag_objects = validated_data.pop("tags", None)
 
         def _update():
-            for attr, value in validated_data.items():
-                setattr(instance, attr, value)
-            if not instance.slug:
-                instance.ensure_unique_slug()
-            instance.save()
-            if tag_objects is not None:
-                instance.tags.set(tag_objects)
-            became_ready = instance.refresh_directory_visibility(save=True)
-            return instance, became_ready
+            with transaction.atomic():
+                # Unter Zeilensperre neu laden und nur die gesendeten Felder
+                # schreiben: Ein voller save() mit dem vor der Validierung
+                # gelesenen Stand würde einen parallelen Avatar-Upload
+                # zurückdrehen (Verweis auf die schon gelöschte alte Datei)
+                # und die Sichtbarkeit aus veralteten Daten berechnen.
+                # of=("self",): nur das Profil sperren, nicht den User.
+                locked = (
+                    MemberProfile.objects.select_for_update(of=("self",))
+                    .select_related("user")
+                    .get(pk=instance.pk)
+                )
+                for attr, value in validated_data.items():
+                    setattr(locked, attr, value)
+                changed_fields = list(validated_data)
+                if not locked.slug:
+                    locked.ensure_unique_slug()
+                    changed_fields.append("slug")
+                if changed_fields:
+                    locked.save(update_fields=changed_fields)
+                if tag_objects is not None:
+                    locked.tags.set(tag_objects)
+                became_ready = locked.refresh_directory_visibility(save=True)
+            return locked, became_ready
 
         profile, became_ready = await sync_to_async(_update)()
         await trigger_profile_side_effects(profile, became_ready)
@@ -373,11 +392,12 @@ class CitySuggestionSerializer(drf_serializers.Serializer):
 
 class AvatarImageField(drf_serializers.ImageField):
     """
-    ImageField mit Byte-Obergrenze.
+    ImageField mit Byte-Obergrenze und Format-Allowlist.
 
-    Die Grenze greift vor super().to_internal_value(): Dort öffnet und prüft
-    Pillow die Datei bereits – bei einer übergroßen Datei soll das gar nicht
-    erst passieren.
+    Beide Prüfungen greifen vor super().to_internal_value(): Dort öffnet
+    Djangos ImageField die Datei mit Pillow – und zwar mit allen Formaten,
+    die Pillow kennt. Eine übergroße Datei oder ein Format außerhalb von
+    JPEG/PNG/WebP soll gar keinen Bildparser erreichen.
     """
 
     default_error_messages = {
@@ -385,12 +405,20 @@ class AvatarImageField(drf_serializers.ImageField):
             "Файл слишком большой. Максимум – "
             f"{MAX_AVATAR_UPLOAD_BYTES // (1024 * 1024)} МБ."
         ),
+        "unsupported_format": UNSUPPORTED_FORMAT_MESSAGE,
     }
 
     def to_internal_value(self, data):
         size = getattr(data, "size", None)
         if size is not None and size > MAX_AVATAR_UPLOAD_BYTES:
             self.fail("too_large")
+        # Ohne read() ist es keine Datei – die Meldung dafür kommt aus super().
+        if hasattr(data, "read"):
+            data.seek(0)
+            head = data.read(SIGNATURE_PROBE_BYTES)
+            data.seek(0)
+            if not has_allowed_image_signature(head):
+                self.fail("unsupported_format")
         return super().to_internal_value(data)
 
 

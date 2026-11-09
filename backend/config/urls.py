@@ -26,16 +26,18 @@ urlpatterns = [
 
 # Bewusst unabhängig von DEBUG: Der geteilte Nginx (stock_scanner_app) leitet
 # /media/ nur an diesen Container weiter, liefert selbst nichts aus – ohne
-# diese Route wäre bei DEBUG=False jeder Avatar 404. Djangos static.serve ist
-# laut Doku "nicht für Produktion" (ineffizient, keine Range-/Cache-Logik);
-# für eine kleine Community mit nur Avataren in MEDIA_ROOT ist das tragbar.
-# Sobald der Nginx Zugriff auf das Media-Volume bekommt, dort ausliefern und
-# diese Route auf DEBUG zurücknehmen. django.conf.urls.static.static() ist
-# hier unbrauchbar, weil es bei DEBUG=False eine leere Liste liefert.
+# diese Route wäre bei DEBUG=False jeder Avatar 404. public_media streamt
+# asynchron, hat aber wie Djangos static.serve keine Range-Logik; für eine
+# kleine Community mit nur Avataren in MEDIA_ROOT ist das tragbar. Sobald der
+# Nginx Zugriff auf das Media-Volume bekommt, dort ausliefern und diese Route
+# auf DEBUG zurücknehmen. django.conf.urls.static.static() ist hier
+# unbrauchbar, weil es bei DEBUG=False eine leere Liste liefert.
 #
-# public_media statt serve: Die Avatar-Originale (avatars/originals/) sind
-# nicht öffentlich. re.escape wie in django.conf.urls.static – ein Punkt o. Ä.
-# in MEDIA_URL wäre sonst ein Regex-Platzhalter.
+# public_media statt serve: Die Avatar-Originale (avatars/originals/) und
+# Altlasten (avatars/user-<id>…) sind nicht öffentlich, und serve() würde
+# unter ASGI jede Datei vorab komplett in den Speicher lesen. re.escape wie in
+# django.conf.urls.static – ein Punkt o. Ä. in MEDIA_URL wäre sonst ein
+# Regex-Platzhalter.
 urlpatterns += [
     re_path(
         r"^%s(?P<path>.*)$" % re.escape(settings.MEDIA_URL.lstrip("/")),

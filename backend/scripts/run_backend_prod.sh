@@ -9,8 +9,10 @@
 set -euo pipefail
 
 # Deploy-Checks (Resend-Key, Telegram-Webhook-Secret, Security-Settings)
-# sind fatal: Jeder Error – Tag security, bot.E001 (leeres Webhook-Secret),
-# accounts.E001/E002 (ohne Resend geht keine Aktivierungs-/Reset-Mail raus) –
+# sind fatal: Jeder Error – Tag security, config.E001 (SECRET_KEY Platzhalter
+# oder < 50 Zeichen), bot.E001/E002 (Webhook-Secret leer bzw. Platzhalter oder
+# < 32 Zeichen), accounts.E001/E002 (ohne Resend geht keine Aktivierungs-/
+# Reset-Mail raus), accounts.E003 (Resend-Key ohne "re_" oder Platzhalter) –
 # bricht den Start per set -e ab. Der Container hängt dann sichtbar im
 # Restart-Loop (docker compose ps/logs backend) – besser als eine unsichere
 # oder stumm kaputte Konfiguration, die live geht und niemandem auffällt.
@@ -26,10 +28,23 @@ echo "Applying database migrations"
 python ./manage.py migrate --noinput
 
 # Nach migrate (braucht das aktuelle Schema), vor daphne: Avatar-Altlasten mit
-# erratbaren Namen und alten EXIF-Daten dürfen nicht live gehen. Idempotent,
-# bei aufgeräumtem Bestand ein reiner Verzeichnis-Scan.
+# erratbaren Namen und alten EXIF-Daten sollen nicht live bleiben. Idempotent;
+# bei aufgeräumtem Bestand prüft jeder Lauf trotzdem, ob die referenzierten
+# Dateien existieren (ein exists() pro Avatar) und listet das Verzeichnis.
+#
+# Bewusst OHNE --clear-missing: Ein falsch gemountetes Media-Volume ließe
+# sonst alle Avatare "fehlen", und der Start würde sie aus der DB löschen.
+# Tote Verweise stehen nur im Log; leeren manuell mit
+#   docker compose exec backend python manage.py cleanup_legacy_avatars --clear-missing
+#
+# Nicht fatal (anders als check --deploy oben): Ein Abbruch (leeres
+# Avatar-Verzeichnis bei vorhandenen Verweisen) oder ein Fehler beim Aufräumen
+# ist ein Fall fürs Log, kein Grund, das Backend nicht zu starten –
+# public_media sperrt die alten Namen ohnehin.
 echo "Cleaning up legacy avatar files"
-python ./manage.py cleanup_legacy_avatars
+if ! python ./manage.py cleanup_legacy_avatars; then
+    echo "WARNUNG: cleanup_legacy_avatars fehlgeschlagen oder abgebrochen (siehe oben) – Start geht weiter." >&2
+fi
 
 # Füllt STATIC_ROOT (Volume static), aus dem WhiteNoise ausliefert.
 echo "Collecting static files"
