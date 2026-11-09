@@ -5,6 +5,11 @@ Konfigurationschecks der Telegram-Anbindung.
 from django.conf import settings
 from django.core.checks import Error, Tags, Warning, register
 
+from config.checks import is_weak_secret
+
+# token_urlsafe(32) ergibt 43 Zeichen; 32 lässt Raum für andere Generatoren.
+MIN_WEBHOOK_SECRET_LENGTH = 32
+
 SECRET_HINT = (
     'Ein zufälliges Secret setzen (z. B. `python -c "import secrets; '
     'print(secrets.token_urlsafe(32))"`) und denselben Wert bei '
@@ -56,6 +61,31 @@ def check_webhook_secret(app_configs, **kwargs):
     if settings.DEBUG:
         return [Warning(message, hint=SECRET_HINT, id="bot.W003")]
     return [Error(message, hint=SECRET_HINT, id="bot.E001")]
+
+
+# deploy=True statt in check_webhook_secret: Der Test-Runner läuft mit
+# DEBUG=False, eine lokale .env im Webhook-Modus mit kurzem Secret würde
+# sonst jeden Testlauf abbrechen.
+@register(Tags.security, deploy=True)
+def check_webhook_secret_strength(app_configs, **kwargs):
+    """
+    Ein Platzhalter oder kurzes Secret macht den Webhook fälschbar: Wer es
+    errät, kann beliebige Updates (Beitritte, Nachrichten) einspielen.
+    Leer meldet bereits bot.E001.
+    """
+    if settings.DEBUG or settings.TELEGRAM_UPDATE_MODE != "webhook":
+        return []
+    secret = settings.TELEGRAM_WEBHOOK_SECRET
+    if not secret or not is_weak_secret(secret, min_length=MIN_WEBHOOK_SECRET_LENGTH):
+        return []
+    return [
+        Error(
+            "TELEGRAM_WEBHOOK_SECRET ist ein Platzhalter oder kürzer als "
+            f"{MIN_WEBHOOK_SECRET_LENGTH} Zeichen.",
+            hint=SECRET_HINT,
+            id="bot.E002",
+        )
+    ]
 
 
 @register(Tags.compatibility)

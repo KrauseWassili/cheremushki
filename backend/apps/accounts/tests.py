@@ -33,7 +33,10 @@ from apps.accounts.services.user_service.email_change import (
     confirm_email_change,
     request_email_change,
 )
-from apps.accounts.tasks import send_email_change_confirmation
+from apps.accounts.tasks import (
+    send_email_change_confirmation,
+    send_password_reset_email,
+)
 from apps.accounts.tokens import email_change_token_generator
 from apps.bot.exceptions import TelegramAPIError
 from apps.bot.models import TelegramInvite
@@ -962,10 +965,21 @@ class PasswordResetMailTests(TestCase):
     """
     Der Request reiht nur einen Task ein, der Worker löst die Adresse auf und
     schickt den Link über Resend.
+
+    delay läuft hier über apply: Der Task wird lokal ausgeführt, egal ob
+    CELERY_TASK_ALWAYS_EAGER gesetzt ist – ohne das landete er im echten
+    Broker, und send_email würde nie aufgerufen.
     """
 
     def setUp(self):
         cache.clear()
+        mock.patch(
+            "apps.accounts.tasks.send_password_reset_email.delay",
+            side_effect=lambda *args, **kwargs: send_password_reset_email.apply(
+                args=args, kwargs=kwargs
+            ),
+        ).start()
+        self.addCleanup(mock.patch.stopall)
         self.user = CustomUser.objects.create_user(
             email="anna@example.com",
             password=VALID_PASSWORD,
@@ -1217,6 +1231,58 @@ class ResendConfigurationCheckTests(SimpleTestCase):
         )
 
 
+class ResendKeyFormatCheckTests(SimpleTestCase):
+    @staticmethod
+    def error_ids(messages) -> set[str]:
+        return {m.id for m in messages if m.id.startswith("accounts.")}
+
+    def test_check_rejects_key_without_prefix_or_placeholder(self):
+        for key in (
+            "abc1234567890",
+            "RE_abc123",
+            "re_",
+            "re_TODO_SET_ME",
+            "re_changeme",
+            "TODO_SET_ME",
+        ):
+            with self.subTest(key=key):
+                with override_settings(
+                    DEBUG=False,
+                    RESEND_API_KEY=key,
+                    RESEND_FROM_EMAIL=RESEND_CONFIGURED["RESEND_FROM_EMAIL"],
+                ):
+                    self.assertEqual(
+                        self.error_ids(check_resend_configuration(None)),
+                        {"accounts.E003"},
+                    )
+
+    @override_settings(
+        DEBUG=False,
+        RESEND_API_KEY="re_Ab12Cd34Ef56Gh78",
+        RESEND_FROM_EMAIL="noreply@example.com",
+    )
+    def test_check_accepts_plausible_key(self):
+        self.assertEqual(check_resend_configuration(None), [])
+
+    @override_settings(
+        DEBUG=True, RESEND_API_KEY="TODO_SET_ME", RESEND_FROM_EMAIL="x@example.com"
+    )
+    def test_check_is_silent_with_debug_for_placeholder_key(self):
+        self.assertEqual(check_resend_configuration(None), [])
+
+    @override_settings(
+        DEBUG=False, RESEND_API_KEY="TODO_SET_ME", RESEND_FROM_EMAIL="x@example.com"
+    )
+    def test_key_format_check_runs_only_as_deploy_check(self):
+        self.assertEqual(
+            self.error_ids(run_checks(include_deployment_checks=False)), set()
+        )
+        self.assertEqual(
+            self.error_ids(run_checks(include_deployment_checks=True)),
+            {"accounts.E003"},
+        )
+
+
 @override_settings(CACHES=LOCMEM_CACHE)
 class RussianUserFacingTextTests(TestCase):
     """
@@ -1236,7 +1302,17 @@ class RussianUserFacingTextTests(TestCase):
         self.client = APIClient()
 
     def test_password_reset_mail_is_russian_and_informal(self):
-        with mock.patch("apps.accounts.tasks.send_email") as send_email_mock:
+        # delay über apply: lokal ausgeführt, unabhängig von
+        # CELERY_TASK_ALWAYS_EAGER (siehe PasswordResetMailTests).
+        run_locally = mock.patch(
+            "apps.accounts.tasks.send_password_reset_email.delay",
+            side_effect=lambda *args, **kwargs: send_password_reset_email.apply(
+                args=args, kwargs=kwargs
+            ),
+        )
+        with run_locally, mock.patch(
+            "apps.accounts.tasks.send_email"
+        ) as send_email_mock:
             self.client.post(
                 "/api/v1/accounts/password/reset/",
                 {"email": self.user.email},
@@ -1306,6 +1382,7 @@ class RussianUserFacingTextTests(TestCase):
         self.assertIn("Неверный пароль", str(response.data["password"][0]))
 
 
+@override_settings(CACHES=LOCMEM_CACHE)
 class PasswordResetDispatchTests(TestCase):
     """
     Der Request reiht für jede Adresse genau einen Task ein – unabhängig von

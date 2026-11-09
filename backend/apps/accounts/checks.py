@@ -5,9 +5,18 @@ Konfigurationschecks des Mailversands (Resend).
 from django.conf import settings
 from django.core.checks import Error, register
 
+from config.checks import is_weak_secret
+
 # Eigener Tag statt Tags.compatibility: Die Meldung betrifft den Mailversand,
 # nicht die Kompatibilität – und `check --tag email` prüft gezielt nur das.
 EMAIL_CHECK_TAG = "email"
+
+# Resend vergibt Keys immer mit diesem Präfix – alles andere ist ein
+# Platzhalter oder ein vertauschter Wert.
+RESEND_KEY_PREFIX = "re_"
+# Nur "mehr als das Präfix": Resend dokumentiert keine feste Länge, eine
+# geratene Schwelle würde einen echten Key irgendwann ablehnen.
+MIN_RESEND_KEY_LENGTH = len(RESEND_KEY_PREFIX) + 1
 
 RESEND_HINT = (
     "In der .env setzen. Die Absender-Domain muss in Resend verifiziert sein "
@@ -37,6 +46,17 @@ def check_resend_configuration(app_configs, **kwargs):
                 "RESEND_API_KEY ist leer – mit DEBUG=False geht keine E-Mail raus.",
                 hint=RESEND_HINT,
                 id="accounts.E001",
+            )
+        )
+    elif not settings.RESEND_API_KEY.startswith(RESEND_KEY_PREFIX) or is_weak_secret(
+        settings.RESEND_API_KEY, min_length=MIN_RESEND_KEY_LENGTH
+    ):
+        problems.append(
+            Error(
+                "RESEND_API_KEY sieht nicht nach einem Resend-Key aus "
+                f"(Präfix {RESEND_KEY_PREFIX!r} fehlt oder Platzhalter).",
+                hint=RESEND_HINT,
+                id="accounts.E003",
             )
         )
     if not settings.RESEND_FROM_EMAIL:

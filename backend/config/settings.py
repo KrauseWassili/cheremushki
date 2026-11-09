@@ -28,6 +28,12 @@ ALLOWED_HOSTS: List[str] = env("ALLOWED_HOSTS").split(",")
 # lokale Entwicklung ohne Proxy, daher unconditional gesetzt.
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
+# Session-/CSRF-Cookies (nur Admin – die API nutzt JWT im Header) ohne DEBUG
+# nur über https. Abgeleitet statt per env: Produktion läuft immer hinter dem
+# TLS-terminierenden Nginx, der Dev-Stack immer mit DEBUG=True über http.
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+
 DJANGO_APPS: Tuple[str, ...] = (
     # --- django unfold
     "unfold",  # before django.contrib.admin
@@ -351,6 +357,30 @@ STORAGES = {
 }
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / env("DJANGO_MEDIA_ROOT", default="media")
+
+# --- Upload-Grenzen ------------------------------------------------------ #
+# Größter legitimer Request: Avatar-Upload mit Zuschnitt + Original, je
+# höchstens 5 MiB (apps.profiles.avatar_files.MAX_AVATAR_UPLOAD_BYTES, dort
+# pro Datei geprüft), plus vier Zahlenfelder.
+#
+# Keine dieser Einstellungen begrenzt den gesamten Request-Body: Djangos
+# ASGIHandler.read_body liest ihn vollständig (ab FILE_UPLOAD_MAX_MEMORY_SIZE
+# in eine Temp-Datei), bevor die View läuft, und DATA_UPLOAD_MAX_MEMORY_SIZE
+# zählt hochgeladene Dateien nicht mit. Die harte Grenze ist deshalb
+# client_max_body_size im vorgeschalteten Nginx (anderes Repo; für zwei
+# volle Avatare plus Multipart-Overhead mindestens 11m).
+#
+# Nicht-Datei-Anteil eines Requests (JSON-PATCH, Formularfelder): Ein Profil
+# hat einige kurze Textfelder, 1 MiB ist reichlich.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 1024 * 1024
+# Admin-Änderungslisten schicken pro markierter Zeile ein Feld, daher nicht
+# knapp an den API-Formularen.
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 500
+# Avatar + Original; das Admin-Formular des Profils hat dieselben zwei.
+DATA_UPLOAD_MAX_NUMBER_FILES = 2
+# Ein Avatar bis 5 MiB bleibt im Speicher (Pillow liest ihn ohnehin ganz),
+# Größeres geht vor der Ablehnung in eine Temp-Datei statt in den RAM.
+FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
 
 API_DOCS_ENABLED: bool = env.bool("API_DOCS_ENABLED", default=True)
 

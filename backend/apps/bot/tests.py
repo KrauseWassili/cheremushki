@@ -10,6 +10,7 @@ from django.core.cache import cache
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.core.checks import messages as checks_messages
+from django.core.checks import run_checks
 from django.db import DatabaseError
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
@@ -438,6 +439,79 @@ class WebhookSecretCheckTests(SimpleTestCase):
     )
     def test_a_set_secret_is_still_functional(self):
         self.assertEqual(bot_checks.check_webhook_secret(None), [])
+
+
+# token_urlsafe(32)-artig, 43 Zeichen, ohne Platzhalter-Teilstrings.
+STRONG_WEBHOOK_SECRET = "Xk3pQ9vR2mT7wL5nB8cZ1hJ4fG6dS0aYuEiOoPqWrTy"
+
+
+class WebhookSecretStrengthCheckTests(SimpleTestCase):
+    @staticmethod
+    def bot_error_ids(messages) -> list[str]:
+        return [m.id for m in messages if m.id == "bot.E002"]
+
+    def test_weak_secret_in_webhook_mode_is_an_error(self):
+        for secret in (
+            "kurz",
+            "x" * 31,
+            "TODO_SET_ME",
+            "changeme-" + "x" * 40,
+            "password",
+        ):
+            with self.subTest(secret=secret):
+                with override_settings(
+                    DEBUG=False,
+                    TELEGRAM_UPDATE_MODE="webhook",
+                    TELEGRAM_WEBHOOK_SECRET=secret,
+                ):
+                    messages = bot_checks.check_webhook_secret_strength(None)
+                self.assertEqual(check_ids(messages), ["bot.E002"])
+                self.assertEqual(messages[0].level, checks_messages.ERROR)
+
+    @override_settings(
+        DEBUG=False, TELEGRAM_UPDATE_MODE="polling", TELEGRAM_WEBHOOK_SECRET="kurz"
+    )
+    def test_weak_secret_in_polling_mode_is_irrelevant(self):
+        self.assertEqual(bot_checks.check_webhook_secret_strength(None), [])
+
+    @override_settings(
+        DEBUG=True, TELEGRAM_UPDATE_MODE="webhook", TELEGRAM_WEBHOOK_SECRET="kurz"
+    )
+    def test_weak_secret_is_silent_with_debug(self):
+        self.assertEqual(bot_checks.check_webhook_secret_strength(None), [])
+
+    @override_settings(
+        DEBUG=False,
+        TELEGRAM_UPDATE_MODE="webhook",
+        TELEGRAM_WEBHOOK_SECRET=STRONG_WEBHOOK_SECRET,
+    )
+    def test_strong_secret_passes(self):
+        self.assertEqual(bot_checks.check_webhook_secret_strength(None), [])
+
+    @override_settings(
+        DEBUG=False, TELEGRAM_UPDATE_MODE="webhook", TELEGRAM_WEBHOOK_SECRET="x" * 32
+    )
+    def test_secret_of_exactly_min_length_passes(self):
+        # MIN_WEBHOOK_SECRET_LENGTH = 32, Grenze inklusive.
+        self.assertEqual(bot_checks.check_webhook_secret_strength(None), [])
+
+    @override_settings(
+        DEBUG=False, TELEGRAM_UPDATE_MODE="webhook", TELEGRAM_WEBHOOK_SECRET=""
+    )
+    def test_empty_secret_is_left_to_e001(self):
+        self.assertEqual(bot_checks.check_webhook_secret_strength(None), [])
+
+    @override_settings(
+        DEBUG=False, TELEGRAM_UPDATE_MODE="webhook", TELEGRAM_WEBHOOK_SECRET="kurz"
+    )
+    def test_strength_check_runs_only_as_deploy_check(self):
+        self.assertEqual(
+            self.bot_error_ids(run_checks(include_deployment_checks=False)), []
+        )
+        self.assertEqual(
+            self.bot_error_ids(run_checks(include_deployment_checks=True)),
+            ["bot.E002"],
+        )
 
 
 class UpdateModeCheckTests(SimpleTestCase):
