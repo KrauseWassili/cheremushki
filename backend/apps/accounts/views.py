@@ -3,14 +3,12 @@ import logging
 from adrf import mixins, viewsets
 from adrf.mixins import Response, get_data
 from asgiref.sync import sync_to_async
-from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import default_token_generator
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
-from django.template.loader import render_to_string
-from django.utils.encoding import force_bytes, force_str
-from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
+from django.utils.encoding import force_str
+from django.utils.http import urlsafe_base64_decode
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -25,7 +23,6 @@ from rest_framework_simplejwt.token_blacklist.models import (
     OutstandingToken,
 )
 
-from apps.accounts.services.email import ResendError, send_email
 from apps.bot.tasks.account import purge_telegram_presence
 from apps.bot.tasks.profile_post import (
     PROFILE_REMINDER_DELAY_SECONDS,
@@ -51,9 +48,18 @@ from .services.user_service.email_change import (
     confirm_email_change,
     request_email_change,
 )
-from .tasks import send_activation_email, send_email_change_confirmation
+from .tasks import (
+    send_activation_email,
+    send_email_change_confirmation,
+    send_password_reset_email,
+)
 
 logger = logging.getLogger(__name__)
+
+# Anzeigename gelöschter Konten. Russisch, weil er in der Oberfläche
+# auftauchen kann (z. B. als Absender alter Kontaktanfragen).
+DELETED_USER_FIRST_NAME = "Удалённый"
+DELETED_USER_LAST_NAME = "пользователь"
 
 
 class LoginViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
@@ -256,12 +262,10 @@ class LogoutViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
             await sync_to_async(_blacklist)()
         except TokenError:
             return Response(
-                {"detail": "Ungültiger Refresh-Token."},
+                {"detail": "Сессия недействительна или уже завершена."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        return Response(
-            {"detail": "Erfolgreich abgemeldet."}, status=status.HTTP_200_OK
-        )
+        return Response({"detail": "Выход выполнен."}, status=status.HTTP_200_OK)
 
 
 class PasswordViewSet(viewsets.GenericViewSet):
@@ -299,9 +303,7 @@ class PasswordViewSet(viewsets.GenericViewSet):
             request.user.save(update_fields=["password"])
 
         await sync_to_async(_change_password)()
-        return Response(
-            {"detail": "Passwort wurde geändert."}, status=status.HTTP_200_OK
-        )
+        return Response({"detail": "Пароль изменён."}, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=["post"], url_path="reset")
     async def reset(self, request):
@@ -311,42 +313,18 @@ class PasswordViewSet(viewsets.GenericViewSet):
 
         detail = {
             "detail": (
-                "Falls ein Konto mit dieser E-Mail existiert, "
-                "wurde ein Reset-Link versendet."
+                "Если аккаунт с этой почтой существует, мы отправили "
+                "на неё ссылку для сброса пароля."
             )
         }
 
-        def _send_reset_mail():
-            user = CustomUser.objects.filter(email__iexact=email).first()
-            if not (user and user.is_active):
-                return
-            uid = urlsafe_base64_encode(force_bytes(user.pk))
-            token = default_token_generator.make_token(user)
-            frontend_url = getattr(
-                settings, "FRONTEND_URL", "http://localhost:3000"
-            ).rstrip("/")
-            reset_url = f"{frontend_url}/password-reset/confirm?uid={uid}&token={token}"
-            html_message = render_to_string(
-                "emails/password_reset.html",
-                {"user": user, "reset_url": reset_url},
-            )
-            try:
-                send_email(
-                    subject="Passwort zurücksetzen",
-                    message=f"Passwort zurücksetzen: {reset_url}",
-                    html_message=html_message,
-                    to=user.email,
-                )
-            except ResendError as exc:
-                # Die Antwort ist für bekannte und unbekannte Adressen
-                # dieselbe. Ein durchgereichter Fehler würde genau diesen
-                # Unterschied verraten und die Adressen verifizierbar machen –
-                # der Fehlschlag gehört deshalb ins Log, nicht in die Antwort.
-                logger.error(
-                    "Passwort-Reset für user=%s nicht zustellbar: %s", user.pk, exc
-                )
-
-        await sync_to_async(_send_reset_mail)()
+        # Immer nur den Task einreihen, die Adresse löst erst der Worker auf:
+        # Antwort und Antwortzeit sind damit für bekannte und unbekannte
+        # Adressen gleich – ein DB-Lookup oder Resend-Call im Request würde
+        # über die Laufzeit verraten, ob es das Konto gibt. Kein on_commit:
+        # Der View schreibt nichts, es gibt keine Transaktion, auf die der
+        # Task warten müsste.
+        await sync_to_async(send_password_reset_email.delay)(email)
         return Response(detail, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=["post"], url_path="reset/confirm")
@@ -379,19 +357,20 @@ class PasswordViewSet(viewsets.GenericViewSet):
         result, extra = await sync_to_async(_reset_password)()
         if result == "invalid_link":
             return Response(
-                {"detail": "Ungültiger Reset-Link."},
+                {"detail": "Некорректная ссылка для сброса пароля."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if result == "invalid_token":
             return Response(
-                {"detail": "Reset-Link ist ungültig oder abgelaufen."},
+                {"detail": "Ссылка для сброса пароля недействительна или устарела."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if result == "validation":
             raise ValidationError({"new_password": extra})
 
         return Response(
-            {"detail": "Passwort wurde zurückgesetzt."}, status=status.HTTP_200_OK
+            {"detail": "Пароль изменён. Теперь можно войти с новым паролем."},
+            status=status.HTTP_200_OK,
         )
 
 
@@ -428,8 +407,8 @@ class AccountDeleteViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
 
             with transaction.atomic():
                 user.email = f"deleted-{user.pk}@deleted.local"
-                user.first_name = "Gelöscht"
-                user.last_name = "Nutzer"
+                user.first_name = DELETED_USER_FIRST_NAME
+                user.last_name = DELETED_USER_LAST_NAME
                 user.street = ""
                 user.street_no = ""
                 user.zip_code = ""

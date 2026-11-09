@@ -15,7 +15,8 @@ logger = logging.getLogger(__name__)
 
 
 def _build_frontend_url(path: str) -> str:
-    frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000").rstrip("/")
+    configured_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000")
+    frontend_url = configured_url.rstrip("/")
     return f"{frontend_url}{path}"
 
 
@@ -54,7 +55,11 @@ def send_activation_email(self, user_id: int):
     except ResendError as exc:
         if exc.retryable:
             raise self.retry(exc=exc)
-        logger.error(f"Permanent failure sending activation email for user_id={user_id}: {exc}")
+        logger.error(
+            "Aktivierungsmail für user_id=%s dauerhaft nicht zustellbar: %s",
+            user_id,
+            exc,
+        )
         raise
 
 
@@ -93,5 +98,57 @@ def send_email_change_confirmation(self, user_id: int):
     except ResendError as exc:
         if exc.retryable:
             raise self.retry(exc=exc)
-        logger.error(f"Permanent failure sending email change confirmation for user_id={user_id}: {exc}")
+        logger.error(
+            "Bestätigung der E-Mail-Änderung für user_id=%s dauerhaft nicht "
+            "zustellbar: %s",
+            user_id,
+            exc,
+        )
+        raise
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def send_password_reset_email(self, email: str):
+    """
+    Schickt den Reset-Link, falls es zur Adresse ein aktives Konto gibt.
+
+    Bekommt die Adresse, nicht die User-ID: Der Request reiht für jede
+    Adresse denselben Task ein, erst hier entscheidet sich, ob eine Mail
+    rausgeht. Unbekannte Adressen enden still – ins Log kommt die Adresse
+    nicht, sie ist personenbezogen und womöglich gar keine Nutzeradresse.
+    """
+    user = CustomUser.objects.filter(email__iexact=email, is_active=True).first()
+    if user is None:
+        return
+
+    uid = urlsafe_base64_encode(force_bytes(user.pk))
+    token = default_token_generator.make_token(user)
+    reset_url = _build_frontend_url(f"/password-reset/confirm?uid={uid}&token={token}")
+
+    html_message = render_to_string(
+        "emails/password_reset.html",
+        {"user": user, "reset_url": reset_url},
+    )
+    message = (
+        f"Здравствуй, {user.first_name}!\n\n"
+        "Чтобы задать новый пароль, перейди по ссылке:\n"
+        f"{reset_url}\n\n"
+        "Если сброс пароля запрошен не тобой, просто "
+        "проигнорируй это письмо.\n"
+    )
+    try:
+        send_email(
+            subject="Сброс пароля",
+            message=message,
+            html_message=html_message,
+            to=user.email,
+        )
+    except ResendError as exc:
+        if exc.retryable:
+            raise self.retry(exc=exc)
+        logger.error(
+            "Passwort-Reset für user_id=%s dauerhaft nicht zustellbar: %s",
+            user.pk,
+            exc,
+        )
         raise

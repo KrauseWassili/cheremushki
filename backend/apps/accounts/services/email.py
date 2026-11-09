@@ -3,18 +3,26 @@ from typing import Iterable
 
 import requests
 from django.conf import settings
+from django.core.mail import EmailMultiAlternatives
 
 logger = logging.getLogger(__name__)
 
+# 429 ist ein 4xx, aber kein dauerhafter Fehler: Resend drosselt nur (Rate
+# Limit pro Sekunde), derselbe Request geht kurz darauf durch. Ohne Retry
+# ginge z. B. eine Einladung verloren, nur weil zwei Mails gleichzeitig raus
+# wollten.
+_RETRYABLE_CLIENT_STATUSES = frozenset({429})
+_SERVER_ERROR_STATUS = 500
+
 
 class ResendError(RuntimeError):
-    """Raised when Resend rejects a message or is unreachable."""
+    """Resend hat die Mail abgelehnt oder war nicht erreichbar."""
 
     def __init__(self, message: str, retryable: bool = False):
         """
-        retryable distinguishes transient failures (network errors, 5xx)
-        worth retrying from permanent ones (4xx, misconfiguration) that
-        won't succeed on retry."""
+        retryable trennt vorübergehende Fehler (Netzwerk, 5xx, 429), bei denen
+        ein Retry lohnt, von dauerhaften (übrige 4xx, Fehlkonfiguration), die
+        auch beim nächsten Versuch scheitern."""
         super().__init__(message)
         self.retryable = retryable
 
@@ -27,31 +35,38 @@ def send_email(
     reply_to: str | None = None,
 ) -> str:
     """
-    Send a transactional email via the Resend API.
+    Verschickt eine Transaktionsmail über die Resend-API.
 
     Args:
-        subject: Email subject line.
-        message: Plain-text body.
-        html_message: HTML body.
-        to: A single recipient address or an iterable of addresses.
-        reply_to: Optional Reply-To address.
+        subject: Betreff.
+        message: Textfassung.
+        html_message: HTML-Fassung.
+        to: Eine Empfängeradresse oder mehrere.
+        reply_to: Optionale Reply-To-Adresse.
 
     Returns:
-        The Resend message id, or "" if the response body wasn't parseable
-        JSON.
+        Die Resend-Message-ID, oder "", wenn die Antwort kein JSON war oder
+        die Mail über den lokalen SMTP-Ersatzweg ging.
 
     Raises:
-        ResendError: If the request could not be sent or Resend rejected it.
+        ResendError: Request nicht absetzbar oder von Resend abgelehnt.
     """
     api_key = settings.RESEND_API_KEY
     from_email = settings.RESEND_FROM_EMAIL
     endpoint = settings.RESEND_ENDPOINT
+    recipients = [to] if isinstance(to, str) else list(to)
+    if not api_key and settings.DEBUG:
+        return _send_via_local_smtp(
+            subject=subject,
+            message=message,
+            html_message=html_message,
+            recipients=recipients,
+            reply_to=reply_to,
+        )
     if not api_key:
         raise ResendError("RESEND_API_KEY is not configured")
     if not from_email:
         raise ResendError("RESEND_FROM_EMAIL is not configured")
-
-    recipients = [to] if isinstance(to, str) else list(to)
 
     payload: dict = {
         "from": from_email,
@@ -78,14 +93,55 @@ def send_email(
 
     if response.status_code >= 400:
         detail = response.text[:500]
-        logger.error(f"Resend rejected message {response.status_code}, {detail}")
+        logger.error(
+            "Resend hat die Mail abgelehnt: HTTP %s, %s", response.status_code, detail
+        )
         raise ResendError(
             f"Resend returned HTTP {response.status_code}: {detail}",
-            retryable=response.status_code >= 500,
+            retryable=_is_retryable_status(response.status_code),
         )
 
     try:
         return response.json().get("id", "")
     except ValueError:
-        logger.warning(f"Resend returned non-JSON response: {response.text[:200]}")
+        logger.warning("Resend-Antwort ist kein JSON: %s", response.text[:200])
         return ""
+
+
+def _is_retryable_status(status_code: int) -> bool:
+    return (
+        status_code >= _SERVER_ERROR_STATUS or status_code in _RETRYABLE_CLIENT_STATUSES
+    )
+
+
+def _send_via_local_smtp(
+    *,
+    subject: str,
+    message: str,
+    html_message: str,
+    recipients: list[str],
+    reply_to: str | None,
+) -> str:
+    """
+    Lokaler Ersatzweg ohne Resend-Key: zustellen über Djangos E-Mail-Backend
+    (per Default SMTP an mailcatcher, EMAIL_HOST/EMAIL_PORT aus settings.py).
+
+    Nur bei DEBUG=True erreichbar – in Produktion soll ein fehlender Key laut
+    scheitern (und check --deploy ihn melden), statt Mails an einen nicht
+    existierenden SMTP-Server zu schicken. Fehler werden als ResendError
+    gemeldet, damit die Aufrufer ihre Retry-Logik nicht doppelt brauchen;
+    ein nicht laufender mailcatcher ist vorübergehend, daher retryable.
+    """
+    email = EmailMultiAlternatives(
+        subject=subject,
+        body=message,
+        from_email=settings.RESEND_FROM_EMAIL or settings.DEFAULT_FROM_EMAIL,
+        to=recipients,
+        reply_to=[reply_to] if reply_to else None,
+    )
+    email.attach_alternative(html_message, "text/html")
+    try:
+        email.send()
+    except OSError as exc:  # smtplib.SMTPException erbt von OSError
+        raise ResendError(f"Local SMTP delivery failed: {exc}", retryable=True) from exc
+    return ""

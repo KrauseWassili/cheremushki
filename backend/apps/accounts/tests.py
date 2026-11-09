@@ -1,10 +1,20 @@
+import smtplib
 from unittest import mock
 
 from django.contrib.auth.tokens import default_token_generator
+from django.core import mail
 from django.core.cache import cache
+from django.core.checks import run_checks
 from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase, override_settings
+from django.db import connection
+from django.db.migrations.executor import MigrationExecutor
+from django.test import (
+    SimpleTestCase,
+    TestCase,
+    TransactionTestCase,
+    override_settings,
+)
 from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
@@ -12,10 +22,12 @@ from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 import io
 
+import requests
 from PIL import Image
 
+from apps.accounts.checks import check_resend_configuration
 from apps.accounts.models import CustomUser
-from apps.accounts.services.email import ResendError
+from apps.accounts.services.email import ResendError, send_email
 from apps.accounts.services.user_service.email_change import (
     EmailChangeError,
     confirm_email_change,
@@ -507,7 +519,9 @@ class AccountDeletionTests(TestCase):
         path = self.profile.avatar.name
         self.assertTrue(default_storage.exists(path))
 
-        self.delete_account()
+        # Die Datei geht erst nach dem Commit der Löschtransaktion.
+        with self.captureOnCommitCallbacks(execute=True):
+            self.delete_account()
 
         self.assertFalse(default_storage.exists(path))
         self.profile.refresh_from_db()
@@ -946,7 +960,8 @@ class EmailChangeTaskTests(TestCase):
 @override_settings(CACHES=LOCMEM_CACHE)
 class PasswordResetMailTests(TestCase):
     """
-    Der Reset-Link geht synchron im Request über Resend raus.
+    Der Request reiht nur einen Task ein, der Worker löst die Adresse auf und
+    schickt den Link über Resend.
     """
 
     def setUp(self):
@@ -966,7 +981,7 @@ class PasswordResetMailTests(TestCase):
         )
 
     def test_known_address_receives_a_reset_link(self):
-        with mock.patch("apps.accounts.views.send_email") as send_email:
+        with mock.patch("apps.accounts.tasks.send_email") as send_email:
             response = self.request_reset(self.user.email)
 
         self.assertEqual(response.status_code, 200)
@@ -976,7 +991,7 @@ class PasswordResetMailTests(TestCase):
         self.assertIn("/password-reset/confirm?uid=", call["message"])
 
     def test_unknown_address_sends_nothing(self):
-        with mock.patch("apps.accounts.views.send_email") as send_email:
+        with mock.patch("apps.accounts.tasks.send_email") as send_email:
             response = self.request_reset("niemand@example.com")
 
         self.assertEqual(response.status_code, 200)
@@ -988,7 +1003,7 @@ class PasswordResetMailTests(TestCase):
         auftreten und die Adresse damit verifizierbar machen.
         """
         with mock.patch(
-            "apps.accounts.views.send_email",
+            "apps.accounts.tasks.send_email",
             side_effect=ResendError("Resend down", retryable=False),
         ):
             failing = self.request_reset(self.user.email)
@@ -996,3 +1011,416 @@ class PasswordResetMailTests(TestCase):
 
         self.assertEqual(failing.status_code, unknown.status_code)
         self.assertEqual(failing.data, unknown.data)
+
+
+RESEND_CONFIGURED = {
+    "RESEND_API_KEY": "re_test_key",
+    "RESEND_FROM_EMAIL": "Черёмушки <noreply@example.com>",
+    "RESEND_ENDPOINT": "https://resend.invalid/emails",
+}
+LOCMEM_EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
+
+
+def send_test_email(**overrides):
+    kwargs = {
+        "subject": "Тема",
+        "message": "Текст",
+        "html_message": "<p>Текст</p>",
+        "to": "anna@example.com",
+        **overrides,
+    }
+    return send_email(**kwargs)
+
+
+def resend_response(status_code: int, *, json_body=None, text: str = ""):
+    response = mock.Mock(status_code=status_code, text=text)
+    if json_body is None:
+        response.json.side_effect = ValueError("kein JSON")
+    else:
+        response.json.return_value = json_body
+    return response
+
+
+@override_settings(DEBUG=False, **RESEND_CONFIGURED)
+class SendEmailResendErrorClassificationTests(SimpleTestCase):
+    """
+    retryable steuert die Celery-Retries: vorübergehende Fehler (Rate Limit,
+    5xx, Netzwerk) sollen wiederholt werden, dauerhafte 4xx nicht.
+    """
+
+    def send_with_status(self, status_code: int) -> ResendError:
+        with mock.patch(
+            "apps.accounts.services.email.requests.post",
+            return_value=resend_response(status_code, text="fehler"),
+        ):
+            with self.assertRaises(ResendError) as ctx:
+                send_test_email()
+        return ctx.exception
+
+    def test_send_email_rate_limit_429_is_retryable(self):
+        self.assertIs(self.send_with_status(429).retryable, True)
+
+    def test_send_email_server_errors_are_retryable(self):
+        for status_code in (500, 502, 503):
+            with self.subTest(status_code=status_code):
+                self.assertIs(self.send_with_status(status_code).retryable, True)
+
+    def test_send_email_other_client_errors_are_permanent(self):
+        for status_code in (400, 401, 403, 422):
+            with self.subTest(status_code=status_code):
+                self.assertIs(self.send_with_status(status_code).retryable, False)
+
+    def test_send_email_network_error_is_retryable(self):
+        with mock.patch(
+            "apps.accounts.services.email.requests.post",
+            side_effect=requests.ConnectionError("unreachable"),
+        ):
+            with self.assertRaises(ResendError) as ctx:
+                send_test_email()
+        self.assertIs(ctx.exception.retryable, True)
+
+    def test_send_email_success_returns_message_id_and_sends_payload(self):
+        with mock.patch(
+            "apps.accounts.services.email.requests.post",
+            return_value=resend_response(200, json_body={"id": "msg_1"}),
+        ) as post:
+            message_id = send_test_email(
+                to=["a@example.com", "b@example.com"], reply_to="anna@example.com"
+            )
+
+        self.assertEqual(message_id, "msg_1")
+        payload = post.call_args.kwargs["json"]
+        self.assertEqual(payload["to"], ["a@example.com", "b@example.com"])
+        self.assertEqual(payload["from"], RESEND_CONFIGURED["RESEND_FROM_EMAIL"])
+        self.assertEqual(payload["reply_to"], "anna@example.com")
+        self.assertEqual(
+            post.call_args.kwargs["headers"]["Authorization"], "Bearer re_test_key"
+        )
+
+
+@override_settings(
+    DEBUG=True,
+    RESEND_API_KEY="",
+    RESEND_FROM_EMAIL="",
+    DEFAULT_FROM_EMAIL="noreply@cheremushki.test",
+    EMAIL_BACKEND=LOCMEM_EMAIL_BACKEND,
+)
+class SendEmailLocalFallbackTests(SimpleTestCase):
+    """
+    Lokal ohne Resend-Key geht die Mail über Djangos Mail-Backend raus
+    (mailcatcher), statt zu scheitern.
+    """
+
+    def test_send_email_fallback_delivers_through_django_backend(self):
+        with mock.patch("apps.accounts.services.email.requests.post") as post:
+            message_id = send_test_email(
+                to=["a@example.com", "b@example.com"], reply_to="anna@example.com"
+            )
+
+        post.assert_not_called()
+        self.assertEqual(message_id, "")
+        self.assertEqual(len(mail.outbox), 1)
+        sent = mail.outbox[0]
+        self.assertEqual(sent.to, ["a@example.com", "b@example.com"])
+        self.assertEqual(sent.subject, "Тема")
+        self.assertEqual(sent.body, "Текст")
+        self.assertEqual(sent.from_email, "noreply@cheremushki.test")
+        self.assertEqual(sent.reply_to, ["anna@example.com"])
+        self.assertEqual(sent.alternatives[0][0], "<p>Текст</p>")
+        self.assertEqual(sent.alternatives[0][1], "text/html")
+
+    def test_send_email_fallback_accepts_single_recipient_string(self):
+        send_test_email(to="anna@example.com")
+        self.assertEqual(mail.outbox[0].to, ["anna@example.com"])
+        self.assertEqual(mail.outbox[0].reply_to, [])
+
+    @override_settings(RESEND_FROM_EMAIL="Черёмушки <hallo@example.com>")
+    def test_send_email_fallback_prefers_resend_sender(self):
+        send_test_email()
+        self.assertEqual(mail.outbox[0].from_email, "Черёмушки <hallo@example.com>")
+
+    def test_send_email_fallback_smtp_failure_is_retryable(self):
+        for error in (
+            smtplib.SMTPException("mailcatcher down"),
+            ConnectionRefusedError("refused"),
+        ):
+            with self.subTest(error=type(error).__name__):
+                with mock.patch(
+                    "django.core.mail.backends.locmem.EmailBackend.send_messages",
+                    side_effect=error,
+                ):
+                    with self.assertRaises(ResendError) as ctx:
+                        send_test_email()
+                self.assertIs(ctx.exception.retryable, True)
+
+
+@override_settings(DEBUG=False, RESEND_API_KEY="", EMAIL_BACKEND=LOCMEM_EMAIL_BACKEND)
+class SendEmailWithoutKeyInProductionTests(SimpleTestCase):
+    def test_send_email_missing_key_raises_without_fallback(self):
+        with mock.patch("apps.accounts.services.email.requests.post") as post:
+            with self.assertRaises(ResendError) as ctx:
+                send_test_email()
+
+        post.assert_not_called()
+        self.assertEqual(mail.outbox, [])
+        self.assertIs(ctx.exception.retryable, False)
+
+    @override_settings(RESEND_API_KEY="re_test_key", RESEND_FROM_EMAIL="")
+    def test_send_email_missing_sender_raises(self):
+        with mock.patch("apps.accounts.services.email.requests.post") as post:
+            with self.assertRaises(ResendError):
+                send_test_email()
+        post.assert_not_called()
+
+
+class ResendConfigurationCheckTests(SimpleTestCase):
+    """
+    accounts.E001/E002 sind Deploy-Checks: Sie dürfen den Testlauf (DEBUG=False,
+    kein Key) nicht abbrechen, aber `check --deploy` muss sie melden.
+    """
+
+    @staticmethod
+    def error_ids(messages) -> set[str]:
+        return {
+            message.id for message in messages if message.id.startswith("accounts.")
+        }
+
+    @override_settings(DEBUG=False, RESEND_API_KEY="", RESEND_FROM_EMAIL="")
+    def test_check_reports_missing_key_and_sender_without_debug(self):
+        self.assertEqual(
+            self.error_ids(check_resend_configuration(None)),
+            {"accounts.E001", "accounts.E002"},
+        )
+
+    @override_settings(DEBUG=False, RESEND_API_KEY="re_key", RESEND_FROM_EMAIL="")
+    def test_check_reports_only_missing_sender(self):
+        self.assertEqual(
+            self.error_ids(check_resend_configuration(None)), {"accounts.E002"}
+        )
+
+    @override_settings(DEBUG=False, **RESEND_CONFIGURED)
+    def test_check_is_silent_when_configured(self):
+        self.assertEqual(check_resend_configuration(None), [])
+
+    @override_settings(DEBUG=True, RESEND_API_KEY="", RESEND_FROM_EMAIL="")
+    def test_check_is_silent_with_debug(self):
+        self.assertEqual(check_resend_configuration(None), [])
+
+    @override_settings(DEBUG=False, RESEND_API_KEY="", RESEND_FROM_EMAIL="")
+    def test_check_runs_only_as_deploy_check(self):
+        self.assertEqual(
+            self.error_ids(run_checks(include_deployment_checks=False)), set()
+        )
+        self.assertEqual(
+            self.error_ids(run_checks(include_deployment_checks=True)),
+            {"accounts.E001", "accounts.E002"},
+        )
+
+
+@override_settings(CACHES=LOCMEM_CACHE)
+class RussianUserFacingTextTests(TestCase):
+    """
+    Mails und API-Fehler sind russisch und duzen ("ты"). Geprüft werden
+    stabile Fragmente, keine ganzen Sätze.
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.user = CustomUser.objects.create_user(
+            email="anna@example.com",
+            password=VALID_PASSWORD,
+            first_name="Anna",
+            last_name="B",
+            is_active=True,
+        )
+        self.client = APIClient()
+
+    def test_password_reset_mail_is_russian_and_informal(self):
+        with mock.patch("apps.accounts.tasks.send_email") as send_email_mock:
+            self.client.post(
+                "/api/v1/accounts/password/reset/",
+                {"email": self.user.email},
+                format="json",
+            )
+
+        call = send_email_mock.call_args.kwargs
+        self.assertEqual(call["subject"], "Сброс пароля")
+        self.assertIn("Здравствуй, Anna", call["message"])
+        # "перейди"/"проигнорируй" = Imperativ der 2. Person Singular (ты).
+        self.assertIn("перейди", call["message"])
+        self.assertNotIn("перейдите", call["message"])
+        self.assertIn("/password-reset/confirm?uid=", call["message"])
+
+    def test_sign_up_duplicate_email_error_is_russian(self):
+        response = self.client.post(
+            "/api/v1/accounts/sign-up/",
+            {
+                "email": "ANNA@example.com",
+                "first_name": "A",
+                "last_name": "B",
+                "password": VALID_PASSWORD,
+                "password_confirm": VALID_PASSWORD,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("уже зарегистрирована", str(response.data["email"][0]))
+
+    def test_sign_up_required_field_error_is_russian(self):
+        response = self.client.post("/api/v1/accounts/sign-up/", {}, format="json")
+        self.assertEqual(response.status_code, 400)
+        # Projektkatalog (backend/locale): "Обязательное поле."
+        self.assertIn("Обязательное поле", str(response.data["email"][0]))
+
+    def test_login_wrong_password_error_is_russian(self):
+        response = self.client.post(
+            "/api/v1/accounts/login/",
+            {"email": self.user.email, "password": "Falsch!123"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 401)
+        # Projektkatalog (backend/locale) statt simplejwts
+        # "Не найдено активной учетной записи …".
+        self.assertEqual(str(response.data["detail"]), "Неверная почта или пароль.")
+
+    def test_password_change_wrong_current_password_error_is_russian(self):
+        self.client.force_authenticate(self.user)
+        response = self.client.post(
+            "/api/v1/accounts/password/change/",
+            {
+                "current_password": "Falsch!123",
+                "new_password": VALID_PASSWORD,
+                "new_password_confirm": VALID_PASSWORD,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("пароль неверен", str(response.data["current_password"][0]))
+
+    def test_account_delete_wrong_password_error_is_russian(self):
+        self.client.force_authenticate(self.user)
+        response = self.client.post(
+            "/api/v1/accounts/delete/", {"password": "Falsch!123"}, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Неверный пароль", str(response.data["password"][0]))
+
+
+class PasswordResetDispatchTests(TestCase):
+    """
+    Der Request reiht für jede Adresse genau einen Task ein – unabhängig von
+    CELERY_TASK_ALWAYS_EAGER, weil delay selbst gemockt ist.
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.delay = mock.patch(
+            "apps.accounts.tasks.send_password_reset_email.delay"
+        ).start()
+        self.addCleanup(mock.patch.stopall)
+        self.user = CustomUser.objects.create_user(
+            email="anna@example.com",
+            password=VALID_PASSWORD,
+            first_name="Anna",
+            last_name="B",
+            is_active=True,
+        )
+        self.client = APIClient()
+
+    def request_reset(self, email: str):
+        return self.client.post(
+            "/api/v1/accounts/password/reset/", {"email": email}, format="json"
+        )
+
+    def test_password_reset_enqueues_task_once_for_known_address(self):
+        response = self.request_reset(self.user.email)
+
+        self.assertEqual(response.status_code, 200)
+        self.delay.assert_called_once_with(self.user.email)
+
+    def test_password_reset_enqueues_normalized_address(self):
+        # Der Serializer kanonisiert (lower/strip), der Worker sucht iexact.
+        self.request_reset("Anna@Example.COM")
+        self.delay.assert_called_once_with("anna@example.com")
+
+    def test_password_reset_unknown_address_gets_identical_response(self):
+        known = self.request_reset(self.user.email)
+        unknown = self.request_reset("niemand@example.com")
+
+        self.assertEqual(unknown.status_code, known.status_code)
+        self.assertEqual(unknown.data, known.data)
+        # Auch für die unbekannte Adresse wird eingereiht – sonst verriete
+        # die Laufzeit, ob es das Konto gibt.
+        self.assertEqual(
+            self.delay.call_args_list,
+            [mock.call(self.user.email), mock.call("niemand@example.com")],
+        )
+
+    def test_password_reset_invalid_address_enqueues_nothing(self):
+        response = self.request_reset("keine-adresse")
+        self.assertEqual(response.status_code, 400)
+        self.delay.assert_not_called()
+
+
+ACCOUNTS_MIGRATION_0004 = "0004_customuser_pending_email"
+ACCOUNTS_MIGRATION_0005 = "0005_rename_deleted_users"
+
+
+class RenameDeletedUsersMigrationTests(TransactionTestCase):
+    """
+    0005 über den MigrationExecutor rückwärts und wieder vorwärts – wie
+    CommunityTagMigrationExecutorTests in apps.profiles.
+    """
+
+    serialized_rollback = True
+
+    def migrate_accounts_to(self, migration_name: str) -> None:
+        executor = MigrationExecutor(connection)
+        executor.migrate([("accounts", migration_name)])
+
+    def migrate_to_leaf(self) -> None:
+        executor = MigrationExecutor(connection)
+        executor.loader.build_graph()
+        executor.migrate(executor.loader.graph.leaf_nodes())
+
+    def setUp(self):
+        self.addCleanup(self.migrate_to_leaf)
+
+    def make_user(self, email: str, first_name: str, last_name: str):
+        return CustomUser.objects.create_user(
+            email=email,
+            password=VALID_PASSWORD,
+            first_name=first_name,
+            last_name=last_name,
+            is_active=False,
+        )
+
+    def test_migration_0005_renames_only_deleted_accounts(self):
+        self.migrate_accounts_to(ACCOUNTS_MIGRATION_0004)
+        deleted = self.make_user("deleted-7@deleted.local", "Gelöscht", "Nutzer")
+        # Ähnlich, aber nicht die Konvention deleted-<pk>@deleted.local:
+        lookalike = self.make_user("anna@deleted.local.example.com", "Anna", "B")
+        regular = self.make_user("boris@example.com", "Boris", "C")
+
+        self.migrate_accounts_to(ACCOUNTS_MIGRATION_0005)
+
+        deleted.refresh_from_db()
+        lookalike.refresh_from_db()
+        regular.refresh_from_db()
+        self.assertEqual(
+            (deleted.first_name, deleted.last_name), ("Удалённый", "пользователь")
+        )
+        self.assertEqual((lookalike.first_name, lookalike.last_name), ("Anna", "B"))
+        self.assertEqual((regular.first_name, regular.last_name), ("Boris", "C"))
+
+    def test_migration_0005_reverse_keeps_names(self):
+        self.migrate_accounts_to(ACCOUNTS_MIGRATION_0004)
+        deleted = self.make_user("deleted-8@deleted.local", "Gelöscht", "Nutzer")
+        self.migrate_accounts_to(ACCOUNTS_MIGRATION_0005)
+
+        self.migrate_accounts_to(ACCOUNTS_MIGRATION_0004)
+
+        deleted.refresh_from_db()
+        self.assertEqual(
+            (deleted.first_name, deleted.last_name), ("Удалённый", "пользователь")
+        )
