@@ -185,27 +185,50 @@ export async function refreshAccessToken(): Promise<string | null> {
   return refreshRequest;
 }
 
+type AuthRetryOptions = {
+  // Explizit übergebenes Token (z. B. direkt nach dem Login) statt des
+  // gespeicherten; es wird nicht auf Ablauf geprüft.
+  accessToken?: string | null;
+  // Fehlt das gespeicherte Token oder ist es abgelaufen, zuerst erneuern –
+  // spart beim App-Start den sicher scheiternden ersten Request.
+  refreshIfStale?: boolean;
+};
+
 /**
  * Führt einen authentifizierten Request aus; bei 401 einmal den Token
  * erneuern und wiederholen.
  *
  * Der Refresh läuft über refreshAccessToken(), parallele 401er teilen sich
- * also denselben Refresh-Request. `request` muss mehrfach aufrufbar sein
- * (Body nicht als Stream übergeben).
+ * also denselben Refresh-Request. Hat ein anderer Request (oder Tab) das
+ * Token inzwischen schon erneuert, wird direkt mit dem neuen wiederholt: Ein
+ * zweiter Refresh mit dem dann bereits rotierten (und geblacklisteten)
+ * Refresh-Token würde scheitern und die Sitzung beenden. `request` muss
+ * mehrfach aufrufbar sein (Body nicht als Stream übergeben).
  */
 export async function withAuthRetry<T>(
   request: (accessToken: string) => Promise<T>,
+  options: AuthRetryOptions = {},
 ): Promise<T> {
-  const token = getAccessToken();
+  let token = options.accessToken ?? getAccessToken();
+  if (
+    options.refreshIfStale &&
+    (!token || (!options.accessToken && isJwtExpired(token)))
+  ) {
+    token = await refreshAccessToken();
+  }
   if (!token) throw new Error("Пользователь не авторизован");
 
   try {
     return await request(token);
   } catch (error) {
     if (!isAuthError(error)) throw error;
-    const refreshed = await refreshAccessToken();
-    if (!refreshed) throw error;
-    return request(refreshed);
+    const storedToken = getAccessToken();
+    const retryToken =
+      storedToken && storedToken !== token
+        ? storedToken
+        : await refreshAccessToken();
+    if (!retryToken) throw error;
+    return request(retryToken);
   }
 }
 
@@ -240,35 +263,11 @@ async function refreshAccessTokenOnce(): Promise<string | null> {
 export async function fetchCurrentUser(
   accessToken?: string | null,
 ): Promise<User> {
-  let token = accessToken ?? getAccessToken();
-  if (!token) {
-    token = await refreshAccessToken();
-  }
-
-  if (!accessToken && token && isJwtExpired(token)) {
-    token = await refreshAccessToken();
-  }
-
-  if (!token) {
-    throw new Error("Пользователь не авторизован");
-  }
-
-  try {
-    return await apiFetch<User>(
-      "/api/v1/accounts/user/me/",
-      { method: "GET" },
-      token,
-    );
-  } catch (error) {
-    if (!isAuthError(error)) throw error;
-    const refreshed = await refreshAccessToken();
-    if (!refreshed) throw error;
-    return apiFetch<User>(
-      "/api/v1/accounts/user/me/",
-      { method: "GET" },
-      refreshed,
-    );
-  }
+  return withAuthRetry(
+    (token) =>
+      apiFetch<User>("/api/v1/accounts/user/me/", { method: "GET" }, token),
+    { accessToken, refreshIfStale: true },
+  );
 }
 
 function isJwtExpired(token: string): boolean {

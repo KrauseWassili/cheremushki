@@ -248,8 +248,9 @@ export default function ProfilePage() {
 
     try {
       if (isAvatarDirty && nextDraft.avatarUrl) {
+        let uploaded: Awaited<ReturnType<typeof uploadDraftAvatar>>;
         try {
-          await uploadDraftAvatar(nextDraft, nextDraft.avatarUrl);
+          uploaded = await uploadDraftAvatar(nextDraft, nextDraft.avatarUrl);
         } catch (error) {
           // Ohne Foto wird auch der Rest nicht gespeichert: Sonst meldet die
           // Seite „Профиль сохранён“, obwohl der neue Zuschnitt fehlt.
@@ -258,6 +259,12 @@ export default function ProfilePage() {
           setSaved(false);
           return;
         }
+        // Das Foto ist gespeichert, auch wenn der PATCH danach scheitert –
+        // sonst würde jeder weitere Speicherversuch es erneut hochladen. Die
+        // lokale data:-URL im Entwurf entspricht dem Hochgeladenen; die
+        // Server-URL kommt mit der PATCH-Antwort bzw. beim nächsten Laden.
+        applyServerState(uploaded);
+        setIsAvatarDirty(false);
       }
 
       const api = await saveMyProfile(nextDraft);
@@ -463,9 +470,6 @@ export default function ProfilePage() {
                 updateField("avatarUrl", avatarUrl ?? "");
                 setAvatarUploadError(null);
               }}
-              onSourceChange={(avatarOriginalUrl) =>
-                updateField("avatarOriginalUrl", avatarOriginalUrl ?? "")
-              }
               onCropChange={updateAvatarCrop}
               sourceStatus={
                 avatarOriginalStatus === "loading" ||
@@ -1302,8 +1306,7 @@ async function uploadDraftAvatar(draft: ProfileDraft, avatarUrl: string) {
     const originalBlob = isDataUrl(draft.avatarOriginalUrl)
       ? await dataUrlToBlob(draft.avatarOriginalUrl)
       : null;
-    await uploadMyAvatar(avatarBlob, crop, originalBlob);
-    return;
+    return uploadMyAvatar(avatarBlob, crop, originalBlob);
   }
 
   const sourceUrl = draft.avatarOriginalUrl || avatarUrl;
@@ -1320,7 +1323,7 @@ async function uploadDraftAvatar(draft: ProfileDraft, avatarUrl: string) {
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
-  await uploadMyAvatar(avatarBlob, crop, null);
+  return uploadMyAvatar(avatarBlob, crop, null);
 }
 
 function getAvatarUploadErrorMessage(error: unknown): string {

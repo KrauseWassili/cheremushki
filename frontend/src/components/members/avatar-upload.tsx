@@ -16,7 +16,6 @@ type AvatarUploadProps = {
   scale?: number;
   cropSize?: number;
   onChange: Dispatch<string | undefined>;
-  onSourceChange?: Dispatch<string | undefined>;
   onCropChange?: (crop: {
     x: number;
     y: number;
@@ -52,7 +51,6 @@ export function AvatarUpload({
   scale = 1,
   cropSize,
   onChange,
-  onSourceChange,
   onCropChange,
   sourceStatus,
   onRetrySource,
@@ -62,6 +60,13 @@ export function AvatarUpload({
   const [error, setError] = useState("");
   const [isCropOpen, setIsCropOpen] = useState(false);
   const [localSourceValue, setLocalSourceValue] = useState<string | undefined>();
+  // Frisch gewähltes Foto, dessen Zuschnitt noch nicht bestätigt ist. Erst
+  // „Готово“ übernimmt es in den Entwurf; Abbruch verwirft es und der
+  // bisherige Avatar bleibt – sonst stünde ein unzugeschnittenes Foto im
+  // Entwurf, das beim Speichern nie hochgeladen würde.
+  const [pendingSourceValue, setPendingSourceValue] = useState<
+    string | undefined
+  >();
   const [imageSize, setImageSize] = useState({ width: 1, height: 1 });
   const [draftCrop, setDraftCrop] = useState({
     x: positionX,
@@ -78,12 +83,15 @@ export function AvatarUpload({
     startSize: number;
   } | null>(null);
 
-  const cropSource = sourceValue || localSourceValue || value;
+  const cropSource =
+    pendingSourceValue || sourceValue || localSourceValue || value;
+  const hasLocalOriginal = Boolean(
+    pendingSourceValue || sourceValue || localSourceValue,
+  );
   // Ein frisch gewähltes Foto bringt sein Original selbst mit.
-  const pendingSourceStatus =
-    sourceValue || localSourceValue ? undefined : sourceStatus;
+  const pendingSourceStatus = hasLocalOriginal ? undefined : sourceStatus;
 
-  useEscapeKey(isCropOpen, () => setIsCropOpen(false));
+  useEscapeKey(isCropOpen, closeCropModal);
 
   function openCropModal() {
     if (pendingSourceStatus) return;
@@ -93,6 +101,15 @@ export function AvatarUpload({
       size: cropSize ?? clamp(100 / scale, 40, 100),
     });
     setIsCropOpen(true);
+  }
+
+  function closeCropModal() {
+    setIsCropOpen(false);
+    setPendingSourceValue(undefined);
+    // Sonst löst dieselbe Datei beim nächsten Versuch kein change-Event aus.
+    if (inputRef.current) {
+      inputRef.current.value = "";
+    }
   }
 
   function updateDraftCrop(nextCrop: { x: number; y: number; size: number }) {
@@ -129,6 +146,10 @@ export function AvatarUpload({
         avatarUrl: croppedAvatar,
         sourceUrl: cropSource,
       });
+      if (pendingSourceValue) {
+        setLocalSourceValue(pendingSourceValue);
+        setPendingSourceValue(undefined);
+      }
       setIsCropOpen(false);
     } catch {
       setError("Не удалось применить кадрирование.");
@@ -162,9 +183,7 @@ export function AvatarUpload({
 
     reader.onload = () => {
       if (typeof reader.result === "string") {
-        setLocalSourceValue(reader.result);
-        onSourceChange?.(reader.result);
-        onChange(reader.result);
+        setPendingSourceValue(reader.result);
         setDraftCrop({ x: 50, y: 50, size: 100 });
         setIsCropOpen(true);
       }
@@ -175,17 +194,6 @@ export function AvatarUpload({
     };
 
     reader.readAsDataURL(file);
-  }
-
-  function handleRemove() {
-    onChange(undefined);
-    onSourceChange?.(undefined);
-    onCropChange?.({ x: 50, y: 50, scale: 1, size: 100 });
-    setError("");
-
-    if (inputRef.current) {
-      inputRef.current.value = "";
-    }
   }
 
   function handleFramePointerDown(
@@ -330,26 +338,16 @@ export function AvatarUpload({
             </Button>
 
             {value && (
-              <>
-                <Button
-                  type="button"
-                  onClick={openCropModal}
-                  disabled={Boolean(pendingSourceStatus)}
-                  aria-busy={pendingSourceStatus === "loading"}
-                >
-                  {pendingSourceStatus === "loading"
-                    ? "Загружаем исходник…"
-                    : "Настроить кадр"}
-                </Button>
-
-                <Button
-                  type="button"
-                  onClick={handleRemove}
-                  variant="danger"
-                >
-                  Удалить
-                </Button>
-              </>
+              <Button
+                type="button"
+                onClick={openCropModal}
+                disabled={Boolean(pendingSourceStatus)}
+                aria-busy={pendingSourceStatus === "loading"}
+              >
+                {pendingSourceStatus === "loading"
+                  ? "Загружаем исходник…"
+                  : "Настроить кадр"}
+              </Button>
             )}
           </div>
 
@@ -375,7 +373,7 @@ export function AvatarUpload({
       </div>
 
       <p className="mt-3 text-xs text-muted-foreground">
-        JPG, PNG или WebP. Не более 5 МБ.
+        JPG, PNG или WebP. Не более 5 МБ и 16 мегапикселей.
       </p>
 
       {cropSource && isCropOpen && !pendingSourceStatus && (
@@ -386,7 +384,7 @@ export function AvatarUpload({
                 <p className="mt-1 text-sm text-muted-foreground">
                   Фото вписано в квадрат. Передвинь рамку или потяни угол.
                 </p>
-                {!sourceValue && !localSourceValue && (
+                {!hasLocalOriginal && (
                   <p className="mt-2 text-xs font-bold text-warning">
                     Для старой аватарки доступен только текущий сохранённый кадр.
                     Загрузи фото заново, чтобы кадрировать исходник.
@@ -396,7 +394,7 @@ export function AvatarUpload({
 
               <Button
                 type="button"
-                onClick={() => setIsCropOpen(false)}
+                onClick={closeCropModal}
                 size="sm"
               >
                 Закрыть
@@ -455,7 +453,7 @@ export function AvatarUpload({
             <div className="mt-6 flex justify-end gap-3">
               <Button
                 type="button"
-                onClick={() => setIsCropOpen(false)}
+                onClick={closeCropModal}
               >
                 Отмена
               </Button>

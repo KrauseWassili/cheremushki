@@ -115,28 +115,39 @@ export async function apiFetch<T>(
     });
 
     const text = await response.text();
-    const data = parseJsonBody(text);
+    const body = parseJsonBody(text);
 
     if (!response.ok) {
+        const data = body.isJson ? body.data : null;
         const {fieldErrors, generalErrors} = extractApiErrors(data);
         const allMessages = [...generalErrors, ...Object.values(fieldErrors).flat()];
         const message = allMessages[0] ?? GENERIC_ERROR_MESSAGE;
         throw new ApiError(message, response.status, data, fieldErrors, generalErrors);
     }
 
-    return data as T;
+    // Erfolg mit Nicht-JSON-Body (z. B. HTML-Seite eines Proxys oder einer
+    // falsch konfigurierten API-URL) darf nicht als null-Daten durchrutschen –
+    // die Aufrufer würden sonst mit einem leeren Ergebnis weiterarbeiten.
+    if (!body.isJson) {
+        throw new ApiError(GENERIC_ERROR_MESSAGE, response.status);
+    }
+
+    return body.data as T;
 }
 
+type ParsedBody = {isJson: true; data: unknown} | {isJson: false};
+
 /**
- * Fehlerantworten kommen nicht immer von DRF (z. B. 413/502 als HTML vom
- * Proxy). Ein SyntaxError würde den HTTP-Status verdecken – dann lieber ohne
- * Body weiter, die Meldung fällt auf GENERIC_ERROR_MESSAGE zurück.
+ * Leerer Body (z. B. 204) gilt als JSON null. Fehlerantworten kommen nicht
+ * immer von DRF (z. B. 413/502 als HTML vom Proxy) – dann ohne Body weiter,
+ * damit kein SyntaxError den HTTP-Status verdeckt; die Meldung fällt auf
+ * GENERIC_ERROR_MESSAGE zurück.
  */
-function parseJsonBody(text: string): unknown {
-    if (!text) return null;
+function parseJsonBody(text: string): ParsedBody {
+    if (!text.trim()) return {isJson: true, data: null};
     try {
-        return JSON.parse(text) as unknown;
+        return {isJson: true, data: JSON.parse(text) as unknown};
     } catch {
-        return null;
+        return {isJson: false};
     }
 }
