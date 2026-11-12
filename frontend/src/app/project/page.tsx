@@ -2,7 +2,7 @@
 
 export default function AboutPage() {
   return (
-    <main className="mx-auto w-full max-w-3xl py-4">
+    <div className="mx-auto w-full max-w-3xl py-4">
       <header className="text-page-header mx-auto mb-10 max-w-3xl text-center">
         <h1 className="mt-3 text-4xl font-bold tracking-tight">
           О проекте
@@ -177,6 +177,6 @@ export default function AboutPage() {
           электронной почты из анкеты.
         </p>
       </section>
-    </main>
+    </div>
   );
 }

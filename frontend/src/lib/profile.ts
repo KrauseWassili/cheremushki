@@ -10,48 +10,53 @@
  *   - directory_ready das maßgebliche Urteil (schließt user.is_active ein)
  */
 
+import {DRAFT_KEY_BY_REQUIRED_FIELD} from "@/lib/profiles";
 import type {ProfileDraft} from "@/types/profile";
 
-/** Backend Feldname. Beschriftung für das Mitglied. */
-export const REQUIRED_FIELD_LABELS: Record<string, string> = {
+/**
+ * Backend Feldname. Beschriftung für das Mitglied.
+ *
+ * Einzige Quelle für die Beschriftung der Pflichtfelder: Das Formular auf
+ * /profile und der Hinweis "Осталось заполнить" lesen beide von hier. Weichen
+ * die Texte voneinander ab, findet das Mitglied das fehlende Feld nicht.
+ */
+export const REQUIRED_FIELD_LABELS = {
     avatar: "Фотография",
     city: "Город",
-    headline: "Коротко о себе",
-    bio: "О себе",
-    can_help_with: "Чем могу помочь",
-    looking_for: "Что мне интересно",
-};
+    headline: "Заголовок",
+    bio: "Краткое описание",
+    can_help_with: "Могу помочь",
+    looking_for: "Сейчас интересно",
+} as const satisfies Record<string, string>;
+
+export type RequiredField = keyof typeof REQUIRED_FIELD_LABELS;
 
 /**
- * Backend Feldname. Schlüssel im lokalen Entwurf.
- *
- * Nötig, weil die API snake_case spricht und der Entwurf camelCase. Fehlt ein
- * Eintrag, gilt das Feld beim Live-Zählen als leer und der Zähler bleibt dann
- * hinter dem Server zurück, statt fälschlich Vollständigkeit zu behaupten.
+ * DOM-ID des Eingabeelements eines Pflichtfelds, damit der Hinweis
+ * "Осталось заполнить" direkt dorthin springen kann.
  */
-const DRAFT_KEY_BY_FIELD: Record<string, keyof ProfileDraft> = {
-    avatar: "avatarUrl",
-    city: "city",
-    headline: "headline",
-    bio: "bio",
-    can_help_with: "canHelpWith",
-    looking_for: "lookingFor",
-};
+export function requiredFieldElementId(field: string): string {
+    return `profile-field-${field}`;
+}
 
 export type ProfileCompletionStatus = {
     filledCount: number;
     totalCount: number;
     isComplete: boolean;
-    missingLabels: string[];
+    missingFields: { field: string; label: string }[];
 };
 
+function isRequiredField(field: string): field is RequiredField {
+    return Object.hasOwn(REQUIRED_FIELD_LABELS, field);
+}
+
 export function labelForField(field: string): string {
-    return REQUIRED_FIELD_LABELS[field] ?? field;
+    return isRequiredField(field) ? REQUIRED_FIELD_LABELS[field] : field;
 }
 
 function isFilledInDraft(draft: Partial<ProfileDraft>, field: string): boolean {
-    const key = DRAFT_KEY_BY_FIELD[field];
-    if (!key) return false;
+    if (!isRequiredField(field)) return false;
+    const key = DRAFT_KEY_BY_REQUIRED_FIELD[field];
     const value = draft[key];
     return typeof value === "string" && value.trim().length > 0;
 }
@@ -73,6 +78,9 @@ export function getProfileCompletionStatus(
         filledCount: fields.length - missing.length,
         totalCount: fields.length,
         isComplete: missing.length === 0,
-        missingLabels: missing.map(labelForField),
+        missingFields: missing.map((field) => ({
+            field,
+            label: labelForField(field),
+        })),
     };
 }

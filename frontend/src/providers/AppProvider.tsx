@@ -36,7 +36,7 @@ interface AppContextValue {
         passwordConfirm: string,
     ) => Promise<string>;
     logout: () => Promise<void>;
-    signOutLocally: () => void;
+    signOutLocally: (options?: { redirect?: boolean }) => void;
     updateCurrentUser: (
         data: Pick<User, "first_name" | "last_name">,
     ) => Promise<User>;
@@ -134,9 +134,11 @@ export function AppProvider({children}: { children: ReactNode }) {
 
             try {
                 const apiProfile = await fetchMyProfile();
-                // Unvollständiges Profil führt auf /profile: Dort hängt die Telegram Einladung.
+                // Das Verzeichnis ist erst nach dem Gruppenbeitritt offen. Wer
+                // noch nicht drin ist, landet auf /profile: Dort steht, was
+                // fehlt und ob die Telegram-Einladung schon unterwegs ist.
                 router.push(
-                    apiProfile.directory_ready ? "/members" : "/profile",
+                    apiProfile.can_view_directory ? "/members" : "/profile",
                 );
             } catch {
                 router.push("/profile");
@@ -151,10 +153,17 @@ export function AppProvider({children}: { children: ReactNode }) {
         notifyAuthLogout();
     }, [applyLocalSignOut]);
 
-    const signOutLocally = useCallback(() => {
-        applyLocalSignOut(false);
-        notifyAuthLogout();
-    }, [applyLocalSignOut]);
+    // Abmelden ohne Server-Request, etwa wenn das Backend die Sitzung schon
+    // selbst beendet hat (Konto gelöscht): Der Logout-POST würde nur mit 401
+    // scheitern. Den eigenen Tab leitet der eigene Broadcast nicht um, daher
+    // `redirect` explizit.
+    const signOutLocally = useCallback(
+        ({redirect = false}: { redirect?: boolean } = {}) => {
+            applyLocalSignOut(redirect);
+            notifyAuthLogout();
+        },
+        [applyLocalSignOut],
+    );
 
     const updateCurrentUser = useCallback(
         async (data: Pick<User, "first_name" | "last_name">) => {

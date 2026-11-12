@@ -1,5 +1,7 @@
+// Fallback nur für `npm run dev` ohne gesetzte Variable: 8010 ist der auf dem
+// Host veröffentlichte Backend-Port (docker-compose, .env.example).
 const API_BASE_URL =
-    process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
 
 // Nur serverseitig, Container-zu-Container-URL (niemals mit dem Präfix „NEXT_PUBLIC_“, sodass sie
 // zur Laufzeit über „process.env“ gelesen und niemals zur Erstellungszeit in das Client-
@@ -59,7 +61,10 @@ export function extractApiErrors(data: unknown): {
     }
 
     for (const [key, value] of Object.entries(record)) {
-        if (key === "detail") continue;
+        // "code" ist ein maschinenlesbarer Fehlercode neben "detail"
+        // (z. B. not_group_member, token_not_valid), kein Feldfehler und
+        // keine Meldung für den Nutzer.
+        if (key === "detail" || key === "code") continue;
 
         const messages = normalizeErrorMessages(value);
         if (messages.length === 0) continue;

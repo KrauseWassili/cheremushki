@@ -2,6 +2,7 @@ import {ApiError, apiFetch, GENERIC_ERROR_MESSAGE, getApiBaseUrl} from "@/lib/ap
 import {withAuthRetry} from "@/lib/auth";
 import type {ContactMode, MemberProfile} from "@/types/member";
 import type {ProfileDraft} from "@/types/profile";
+import type {RequiredField} from "@/lib/profile";
 
 /** Backend snake_case response shape */
 type ApiMemberProfile = {
@@ -40,10 +41,28 @@ type ApiMemberProfile = {
     required_fields?: string[];
     // Ist die Telegram-Einladung versandt? Kommt mit jedes Request mit.
     invite_sent?: boolean;
+    // Nur auf /profiles/user/me/: Darf das Mitglied das Verzeichnis sehen?
+    // Die Regel (Telegram-Gruppe beigetreten) entscheidet allein das Backend.
+    can_view_directory?: boolean;
     // Nur auf /profiles/user/me/: Liegt ein unbeschnittenes Original vor? Es
     // ist nicht öffentlich, siehe fetchMyAvatarOriginal().
     has_avatar_original?: boolean;
 };
+
+// Fehlercode im 403 des Verzeichnisses, solange das Mitglied der
+// Telegram-Gruppe noch nicht beigetreten ist (apps/profiles/permissions.py).
+const NOT_GROUP_MEMBER_CODE = "not_group_member";
+
+/** Ist der Fehler das Verzeichnis-Gate „noch nicht in der Gruppe“? */
+export function isNotGroupMemberError(err: unknown): boolean {
+    if (!(err instanceof ApiError) || err.status !== 403) return false;
+    const data = err.data;
+    return (
+        typeof data === "object" &&
+        data !== null &&
+        (data as Record<string, unknown>).code === NOT_GROUP_MEMBER_CODE
+    );
+}
 
 export type ApiProfileTagSuggestion = {
     name: string;
@@ -103,6 +122,21 @@ export function mapApiProfileToMember(api: ApiMemberProfile): MemberProfile {
     };
 }
 
+/**
+ * Backend-Pflichtfeld → Schlüssel im lokalen Entwurf, für den Live-Zähler in
+ * lib/profile.ts. Liegt hier, weil dies die einzige Stelle für das
+ * snake_case↔camelCase-Mapping ist. Fehlt ein Eintrag, meldet tsc das über
+ * den Record-Typ; der Zähler bliebe sonst hinter dem Server zurück.
+ */
+export const DRAFT_KEY_BY_REQUIRED_FIELD: Record<RequiredField, keyof ProfileDraft> = {
+    avatar: "avatarUrl",
+    city: "city",
+    headline: "headline",
+    bio: "bio",
+    can_help_with: "canHelpWith",
+    looking_for: "lookingFor",
+};
+
 export function mapApiProfileToDraft(
     api: ApiMemberProfile,
     names?: { firstName?: string; lastName?: string; email?: string },
@@ -137,8 +171,12 @@ export function mapApiProfileToDraft(
 }
 
 function draftToApiPayload(draft: ProfileDraft) {
+    const slug = draft.slug.trim();
     return {
-        slug: draft.slug.trim(),
+        // Leer gar nicht senden: Ein "" würde einen vorhandenen Slug
+        // überschreiben und neu erzeugen, geteilte Links brächen. Ohne Slug
+        // vergibt das Backend beim Speichern selbst einen (ensure_unique_slug).
+        ...(slug ? {slug} : {}),
         headline: draft.headline.trim(),
         city: draft.city.trim(),
         profession: draft.profession.trim(),

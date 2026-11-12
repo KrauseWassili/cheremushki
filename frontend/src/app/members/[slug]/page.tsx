@@ -3,11 +3,12 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { DirectoryLocked } from "@/components/members/directory-locked";
 import { MemberProfilePage } from "@/components/members/member-profile-page";
 import { Button } from "@/components/ui/button";
 import { LoadingState } from "@/components/ui/loading-state";
 import { useApp } from "@/providers/AppProvider";
-import { fetchMemberProfile } from "@/lib/profiles";
+import { fetchMemberProfile, isNotGroupMemberError } from "@/lib/profiles";
 import type { MemberProfile } from "@/types/member";
 import { ApiError } from "@/lib/api";
 
@@ -18,6 +19,7 @@ export default function MemberPage() {
   const [member, setMember] = useState<MemberProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [locked, setLocked] = useState(false);
 
   useEffect(() => {
     if (authLoading) return;
@@ -31,19 +33,24 @@ export default function MemberPage() {
     async function load() {
       setLoading(true);
       setError(null);
+      setLocked(false);
       try {
         const data = await fetchMemberProfile(slug);
         if (!cancelled) setMember(data);
       } catch (err) {
         if (!cancelled) {
           setMember(null);
-          setError(
-            err instanceof ApiError && err.status === 404
-              ? "Профиль не найден."
-              : err instanceof ApiError
-                ? err.message
-                : "Не удалось загрузить профиль.",
-          );
+          if (isNotGroupMemberError(err)) {
+            setLocked(true);
+          } else {
+            setError(
+              err instanceof ApiError && err.status === 404
+                ? "Профиль не найден."
+                : err instanceof ApiError
+                  ? err.message
+                  : "Не удалось загрузить профиль.",
+            );
+          }
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -62,7 +69,7 @@ export default function MemberPage() {
 
   if (!isLoggedIn) {
     return (
-      <main className="mx-auto w-full max-w-lg py-16 text-center">
+      <div className="mx-auto w-full max-w-lg py-16 text-center">
         <p className="text-muted-foreground">
           Войди, чтобы открыть профиль участника.
         </p>
@@ -74,12 +81,20 @@ export default function MemberPage() {
         >
           Войти
         </Button>
-      </main>
+      </div>
+    );
+  }
+
+  if (locked) {
+    return (
+      <div className="mx-auto w-full max-w-3xl py-4">
+        <DirectoryLocked />
+      </div>
     );
   }
 
   return (
-    <main className="mx-auto w-full max-w-3xl py-4">
+    <div className="mx-auto w-full max-w-3xl py-4">
       <Link
         href="/members"
         className="my-5 inline-flex text-base font-bold text-muted-foreground hover:text-foreground"
@@ -94,6 +109,6 @@ export default function MemberPage() {
       ) : (
         <MemberProfilePage initialMember={member} />
       )}
-    </main>
+    </div>
   );
 }

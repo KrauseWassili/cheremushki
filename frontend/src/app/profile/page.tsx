@@ -4,6 +4,7 @@ import {
   type Dispatch,
   type FormEvent,
   type SetStateAction,
+  Fragment,
   useEffect,
   useMemo,
   useState,
@@ -24,7 +25,11 @@ import {
   deleteAccount,
   requestEmailChange,
 } from "@/lib/auth";
-import { getProfileCompletionStatus } from "@/lib/profile";
+import {
+  REQUIRED_FIELD_LABELS,
+  getProfileCompletionStatus,
+  requiredFieldElementId,
+} from "@/lib/profile";
 import {
   dataUrlToBlob,
   fetchMyAvatarOriginal,
@@ -79,7 +84,7 @@ const initialDraft: ProfileDraft = {
 };
 
 export default function ProfilePage() {
-  const { user, isLoggedIn, logout, updateCurrentUser } = useApp();
+  const { user, isLoggedIn, signOutLocally, updateCurrentUser } = useApp();
   const [draft, setDraft] = useState<ProfileDraft>(initialDraft);
   const [saved, setSaved] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
@@ -239,11 +244,10 @@ export default function ProfilePage() {
       firstName: draft.firstName.trim(),
       lastName: draft.lastName.trim(),
       email: draft.email.trim(),
-      slug:
-        draft.slug.trim() ||
-        createProfileSlug(
-          [draft.firstName, draft.lastName].filter(Boolean).join(" "),
-        ),
+      // Kein Slug aus dem Namen ableiten: Den vergibt allein das Backend
+      // (Umschrift, Eindeutigkeit, reservierte Slugs) – leer wird er nicht
+      // mitgeschickt, siehe draftToApiPayload.
+      slug: draft.slug.trim(),
     };
 
     try {
@@ -320,7 +324,9 @@ export default function ProfilePage() {
 
   async function handleDeleteAccount(password: string) {
     await deleteAccount(password);
-    await logout();
+    // Das Backend hat alle Refresh-Tokens bereits geblacklistet und das Konto
+    // deaktiviert; ein Logout-POST würde nur mit 401 scheitern.
+    signOutLocally({ redirect: true });
   }
 
   if (!isLoggedIn) {
@@ -445,7 +451,20 @@ export default function ProfilePage() {
               </p>
             ) : (
               <p className="mt-2 text-xs text-muted-foreground">
-                Осталось заполнить: {requiredStatus.missingLabels.join(", ")}.
+                Осталось заполнить:{" "}
+                {requiredStatus.missingFields.map(({ field, label }, index) => (
+                  <Fragment key={field}>
+                    {index > 0 && ", "}
+                    <button
+                      type="button"
+                      onClick={() => focusRequiredField(field)}
+                      className="font-bold underline underline-offset-2 hover:text-foreground"
+                    >
+                      {label}
+                    </button>
+                  </Fragment>
+                ))}
+                .
                 После этого придёт приглашение в Telegram-группу.
               </p>
             )}
@@ -461,6 +480,8 @@ export default function ProfilePage() {
               positionY={draft.avatarPositionY}
               scale={draft.avatarScale}
               cropSize={draft.avatarCropSize}
+              label={REQUIRED_FIELD_LABELS.avatar}
+              inputId={requiredFieldElementId("avatar")}
               fullName={
                 [draft.firstName, draft.lastName].filter(Boolean).join(" ") ||
                 "Профиль"
@@ -483,8 +504,12 @@ export default function ProfilePage() {
           </div>
 
           <label className="grid gap-2">
-            <RequiredFieldLabel label="Город" isFilled={isFilled(draft.city)} />
+            <RequiredFieldLabel
+              label={REQUIRED_FIELD_LABELS.city}
+              isFilled={isFilled(draft.city)}
+            />
             <input
+              id={requiredFieldElementId("city")}
               required
               value={draft.city}
               onChange={(event) => updateField("city", event.target.value)}
@@ -494,10 +519,11 @@ export default function ProfilePage() {
 
           <label className="grid gap-2">
             <RequiredFieldLabel
-              label="Заголовок"
+              label={REQUIRED_FIELD_LABELS.headline}
               isFilled={isFilled(draft.headline)}
             />
             <input
+              id={requiredFieldElementId("headline")}
               required
               value={draft.headline}
               onChange={(event) => updateField("headline", event.target.value)}
@@ -509,10 +535,11 @@ export default function ProfilePage() {
         <div className="mt-5 grid gap-5">
           <label className="grid gap-2">
             <RequiredFieldLabel
-              label="Краткое описание"
+              label={REQUIRED_FIELD_LABELS.bio}
               isFilled={isFilled(draft.bio)}
             />
             <textarea
+              id={requiredFieldElementId("bio")}
               required
               value={draft.bio}
               onChange={(event) => updateField("bio", event.target.value)}
@@ -522,10 +549,11 @@ export default function ProfilePage() {
 
           <label className="grid gap-2">
             <RequiredFieldLabel
-              label="Могу помочь"
+              label={REQUIRED_FIELD_LABELS.can_help_with}
               isFilled={isFilled(draft.canHelpWith)}
             />
             <textarea
+              id={requiredFieldElementId("can_help_with")}
               required
               value={draft.canHelpWith}
               onChange={(event) =>
@@ -537,10 +565,11 @@ export default function ProfilePage() {
 
           <label className="grid gap-2">
             <RequiredFieldLabel
-              label="Сейчас интересно"
+              label={REQUIRED_FIELD_LABELS.looking_for}
               isFilled={isFilled(draft.lookingFor)}
             />
             <textarea
+              id={requiredFieldElementId("looking_for")}
               required
               value={draft.lookingFor}
               onChange={(event) =>
@@ -1452,6 +1481,17 @@ function getRequiredFieldClassName(value: string, multiline = false) {
   ].join(" ");
 }
 
+/**
+ * Springt aus dem Hinweis "Осталось заполнить" zum fehlenden Feld. Ohne
+ * passendes Element (unbekanntes Feld vom Backend) passiert bewusst nichts.
+ */
+function focusRequiredField(field: string) {
+  const element = document.getElementById(requiredFieldElementId(field));
+  if (!element) return;
+  element.scrollIntoView({ block: "center", behavior: "smooth" });
+  element.focus({ preventScroll: true });
+}
+
 function RequiredFieldLabel({
   label,
   isFilled,
@@ -1474,15 +1514,4 @@ function RequiredFieldLabel({
       </span>
     </span>
   );
-}
-
-function createProfileSlug(value: string) {
-  const fallback = "my-profile";
-  const slug = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9а-яё]+/giu, "-")
-    .replace(/^-+|-+$/g, "");
-
-  return slug || fallback;
 }

@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { DirectoryLocked } from "@/components/members/directory-locked";
 import { MemberDirectory } from "@/components/members/member-directory";
 import { Button } from "@/components/ui/button";
 import { LoadingState } from "@/components/ui/loading-state";
 import { useApp } from "@/providers/AppProvider";
-import { fetchMemberProfiles } from "@/lib/profiles";
+import { fetchMemberProfiles, isNotGroupMemberError } from "@/lib/profiles";
 import type { MemberProfile } from "@/types/member";
 import { ApiError } from "@/lib/api";
 
@@ -14,6 +15,7 @@ export default function MembersPage() {
   const [members, setMembers] = useState<MemberProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [locked, setLocked] = useState(false);
 
   useEffect(() => {
     if (authLoading) return;
@@ -29,11 +31,14 @@ export default function MembersPage() {
     async function load() {
       setLoading(true);
       setError(null);
+      setLocked(false);
       try {
         const data = await fetchMemberProfiles();
         if (!cancelled) setMembers(data);
       } catch (err) {
-        if (!cancelled) {
+        if (!cancelled && isNotGroupMemberError(err)) {
+          setLocked(true);
+        } else if (!cancelled) {
           setError(
             err instanceof ApiError
               ? err.message
@@ -57,7 +62,7 @@ export default function MembersPage() {
 
   if (!isLoggedIn) {
     return (
-      <main className="mx-auto w-full max-w-lg py-16 text-center">
+      <div className="mx-auto w-full max-w-lg py-16 text-center">
         <h1 className="text-3xl font-bold">Участники</h1>
         <p className="mt-4 text-muted-foreground">
           Войди в аккаунт, чтобы видеть каталог участников.
@@ -70,12 +75,12 @@ export default function MembersPage() {
         >
           Войти
         </Button>
-      </main>
+      </div>
     );
   }
 
   return (
-    <main className="mx-auto w-full max-w-3xl py-4">
+    <div className="mx-auto w-full max-w-3xl py-4">
       <header className="mx-auto mb-10 max-w-3xl text-center">
         <h1 className="mt-3 text-4xl font-bold tracking-tight">
           Участники
@@ -88,11 +93,13 @@ export default function MembersPage() {
         </p>
       </header>
 
-      {error ? (
+      {locked ? (
+        <DirectoryLocked />
+      ) : error ? (
         <p className="text-center text-destructive">{error}</p>
       ) : (
         <MemberDirectory members={members} />
       )}
-    </main>
+    </div>
   );
 }

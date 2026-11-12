@@ -11,7 +11,13 @@ type AuthSyncEvent = {
   type: "logout";
   issuedAt: number;
   nonce: string;
+  senderId: string;
 };
+
+// Kennung dieses Tabs (pro JS-Realm einmal erzeugt). BroadcastChannel stellt
+// Nachrichten auch an andere Channel-Instanzen im selben Tab zu; ohne Absender
+// würde der eigene Subscriber den Logout wiederholen und auf "/" umleiten.
+const AUTH_SYNC_TAB_ID = Math.random().toString(36).slice(2);
 
 let refreshRequest: Promise<string | null> | null = null;
 
@@ -77,6 +83,7 @@ export function notifyAuthLogout(): void {
     type: "logout",
     issuedAt: Date.now(),
     nonce: Math.random().toString(36).slice(2),
+    senderId: AUTH_SYNC_TAB_ID,
   };
 
   if ("BroadcastChannel" in window) {
@@ -92,11 +99,15 @@ export function subscribeToAuthLogout(handler: () => void): () => void {
   if (typeof window === "undefined") return () => {};
 
   let channel: BroadcastChannel | null = null;
+  // Andere Tabs bekommen dasselbe Ereignis zweimal – per BroadcastChannel und
+  // per storage-Event. Die Nonce macht daraus einen einzigen Aufruf.
+  let lastHandledNonce: string | null = null;
 
   function handleMessage(data: unknown) {
-    if (isAuthSyncLogout(data)) {
-      handler();
-    }
+    if (!isAuthSyncLogout(data) || data.senderId === AUTH_SYNC_TAB_ID) return;
+    if (data.nonce === lastHandledNonce) return;
+    lastHandledNonce = data.nonce;
+    handler();
   }
 
   if ("BroadcastChannel" in window) {

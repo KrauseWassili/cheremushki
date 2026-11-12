@@ -7,6 +7,10 @@ import { ModalFrame } from "@/components/ui/modal";
 import { CroppedAvatar } from "@/components/members/cropped-avatar";
 
 type AvatarUploadProps = {
+  // Beschriftung und Input-ID kommen von der Seite, damit der Hinweis
+  // "Осталось заполнить" denselben Text nutzt und zum Feld springen kann.
+  label: string;
+  inputId: string;
   value?: string;
   sourceValue?: string;
   fullName: string;
@@ -41,7 +45,12 @@ const allowedTypes = [
 
 const maxFileSize = 5 * 1024 * 1024;
 
+const unreadableFileMessage =
+  "Не удалось прочитать файл. Выбери изображение JPG, PNG или WebP.";
+
 export function AvatarUpload({
+  label,
+  inputId,
   value,
   sourceValue,
   fullName,
@@ -57,6 +66,10 @@ export function AvatarUpload({
   uploadError,
 }: AvatarUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  // Zählt Dateiauswahlen. Lesen und Dekodieren laufen asynchron: Wählt man B,
+  // während A noch läuft, darf A weder den Dialog öffnen noch seinen Fehler
+  // neben B anzeigen – es gilt nur das Ergebnis der letzten Auswahl.
+  const fileSelectionRef = useRef(0);
   const [error, setError] = useState("");
   const [isCropOpen, setIsCropOpen] = useState(false);
   const [localSourceValue, setLocalSourceValue] = useState<string | undefined>();
@@ -165,6 +178,8 @@ export function AvatarUpload({
       return;
     }
 
+    const selection = ++fileSelectionRef.current;
+    const isStale = () => selection !== fileSelectionRef.current;
     setError("");
 
     if (!allowedTypes.includes(file.type)) {
@@ -179,18 +194,38 @@ export function AvatarUpload({
       return;
     }
 
+    // Input sofort leeren: Bei jedem Ausgang (Fehler wie Erfolg) soll dieselbe
+    // Datei erneut ein change-Event auslösen; `file` haben wir bereits.
+    event.target.value = "";
+
     const reader = new FileReader();
 
-    reader.onload = () => {
-      if (typeof reader.result === "string") {
-        setPendingSourceValue(reader.result);
-        setDraftCrop({ x: 50, y: 50, size: 100 });
-        setIsCropOpen(true);
+    reader.onload = async () => {
+      if (isStale()) return;
+      const source = reader.result;
+      if (typeof source !== "string") {
+        setError(unreadableFileMessage);
+        return;
       }
+
+      // Endung und MIME-Typ sagen nichts über den Inhalt. Erst dekodieren,
+      // dann den Dialog öffnen – sonst zeigt er ein kaputtes <img> und der
+      // Fehler käme erst bei „Готово“ als vermeintliches Crop-Problem.
+      try {
+        await decodeImage(source);
+      } catch {
+        if (!isStale()) setError(unreadableFileMessage);
+        return;
+      }
+      if (isStale()) return;
+
+      setPendingSourceValue(source);
+      setDraftCrop({ x: 50, y: 50, size: 100 });
+      setIsCropOpen(true);
     };
 
     reader.onerror = () => {
-      setError("Не удалось прочитать файл.");
+      if (!isStale()) setError(unreadableFileMessage);
     };
 
     reader.readAsDataURL(file);
@@ -273,7 +308,7 @@ export function AvatarUpload({
   return (
     <div>
       <p className="flex items-center justify-between gap-3 font-bold">
-        <span>Фотография</span>
+        <span>{label}</span>
         {required && (
           <span
             className={[
@@ -325,7 +360,7 @@ export function AvatarUpload({
             accept="image/jpeg,image/png,image/webp"
             onChange={handleFileChange}
             className="sr-only"
-            id="avatar-upload"
+            id={inputId}
             aria-label="Загрузить фотографию профиля"
           />
 
@@ -580,6 +615,16 @@ async function createCroppedAvatar(
   );
 
   return canvas.toDataURL("image/jpeg", 0.92);
+}
+
+// Wirft, wenn der Browser die Daten nicht als Bild dekodieren kann.
+async function decodeImage(source: string) {
+  const image = new Image();
+  image.src = source;
+  await image.decode();
+  if (!image.naturalWidth || !image.naturalHeight) {
+    throw new Error("Image has no dimensions");
+  }
 }
 
 function loadImage(source: string) {
