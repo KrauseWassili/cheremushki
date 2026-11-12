@@ -82,3 +82,5 @@ backend/staticfiles
 /backend/docker-compose.env
 /.env
 /backend/media/
+# E2E (Playwright-Läufe, Screenshots, lokaler Stack mit Secrets)
+/e2e/
