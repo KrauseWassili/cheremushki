@@ -83,8 +83,11 @@ def _fit_caption(body: str, footer: str = "") -> str:
 
 
 def build_profile_url(profile: MemberProfile) -> str:
-    slug = profile.slug or f"member-{profile.user_id}"
-    return f"{resolve_profile_link_base()}/members/{slug}"
+    # Ohne Slug (nur möglich, wenn ihn jemand im Admin geleert hat) führt der
+    # Button ins Verzeichnis statt auf ein erfundenes member-<user_id>: Das
+    # wäre ein toter Link und legte die User-ID offen (E2E F6).
+    base = f"{resolve_profile_link_base()}/members"
+    return f"{base}/{profile.slug}" if profile.slug else base
 
 
 def build_city_token(profile: MemberProfile) -> str:

@@ -4,11 +4,30 @@ Versand der Telegram-Einladung.
 Die Einladung ist der Übergang von "registriert" zu "Teil der Gruppe" und
 damit der einzige Schritt im Onboarding, der sich nicht zurücknehmen lässt:
 Ein verschickter Einladungslink ist einmalig gültig und wanderfähig. Deshalb
-sitzen hier zwei Sicherungen das Gate (vollständiges Profil) und der Schutz
+sitzen hier zwei Sicherungen: das Gate (vollständiges Profil) und der Schutz
 gegen Doppelversand.
+
+Was ein Fehlschlag hinterlässt – und warum nichts freigegeben werden muss:
+
+- ``createChatInviteLink`` scheitert: Die Transaktion um den Claim rollt
+  zurück, ``invite_link`` und ``invite_sent_at`` bleiben leer. Bei Telegram
+  existiert kein Link, ein späterer Anlauf beginnt von vorn.
+- Der Mailversand scheitert: ``invite_link`` ist gespeichert,
+  ``invite_sent_at`` bleibt leer. Ein späterer Anlauf verschickt *denselben*
+  Link erneut – kein zusätzlicher Zugang zur Gruppe, also nichts zu
+  widerrufen.
+
+In beiden Fällen steht ``invite_sent_at`` auf NULL. Genau daran hängt der
+Nachholweg: ``trigger_profile_side_effects`` stößt diesen Task bei jedem
+Speichern eines vollständigen Profils erneut an, solange
+:func:`apps.bot.services.invites.is_invite_pending` gilt – gedrosselt durch
+:func:`apps.bot.services.invites.claim_invite_dispatch`, damit ein noch
+laufender Task keinen Zwilling bekommt; dazu kommt die Admin-Action
+„Telegram-Einladung erneut senden“. Ein Beat-Job ist dafür nicht nötig.
 """
 
 import logging
+from typing import NoReturn
 
 from celery import shared_task
 from django.db import transaction
@@ -17,6 +36,7 @@ from django.utils import timezone
 
 from apps.accounts.models import CustomUser
 from apps.accounts.services.email import send_email, ResendError
+from apps.bot.exceptions import TelegramAPIError, TelegramTransportError
 from apps.bot.models import TelegramInvite
 from apps.bot.services.telegram import create_single_use_invite_link
 from apps.profiles.models import MemberProfile
@@ -97,16 +117,43 @@ def _claim_invite(task, user: CustomUser) -> str | None:
 
         if not invite.invite_link:
             try:
-                invite.invite_link = create_single_use_invite_link(
-                    name=f"user-{user.pk}"
-                )
-            except Exception as exc:
-                # Retry innerhalb der Transaktion: Der Link ist noch nicht
+                invite_link = create_single_use_invite_link(name=f"user-{user.pk}")
+            except (TelegramAPIError, TelegramTransportError) as exc:
+                # Abbruch innerhalb der Transaktion: Der Link ist noch nicht
                 # gespeichert, der nächste Versuch beginnt also von vorn.
-                raise task.retry(exc=exc)
-            invite.save(update_fields=["invite_link"])
+                _retry_or_give_up(task, user, exc)
+            else:
+                invite.invite_link = invite_link
+                invite.save(update_fields=["invite_link"])
 
         return invite.invite_link
+
+
+def _retry_or_give_up(
+    task, user: CustomUser, exc: TelegramAPIError | TelegramTransportError
+) -> NoReturn:
+    """Wirft immer: als Celery-Retry oder als dauerhafter Fehler.
+
+    Dauerhafte Fehler (ungültiges Token, Bot ohne Admin-Rechte) würden jeden
+    Retry gleich beantworten und nur die Fehlkonfiguration hinter drei
+    Warnungen verstecken. Deshalb ``logger.error`` und Abbruch. Verloren ist
+    die Einladung damit nicht: ``invite_sent_at`` bleibt leer, das nächste
+    Speichern des Profils nach Ablauf der Dispatch-Sperre
+    (``INVITE_DISPATCH_DEBOUNCE_SECONDS``) oder sofort die Admin-Action stößt
+    sie erneut an.
+    """
+    if exc.retryable:
+        # Bei 429 nennt Telegram die Wartezeit selbst; ohne Angabe greift
+        # default_retry_delay.
+        retry_after = exc.retry_after if isinstance(exc, TelegramAPIError) else None
+        raise task.retry(exc=exc, countdown=retry_after)
+    logger.error(
+        "Einladungslink für user=%s nicht erzeugbar, dauerhafter Telegram-Fehler "
+        "– kein Retry, Konfiguration prüfen: %s",
+        user.pk,
+        exc,
+    )
+    raise exc
 
 
 def _mark_invite_sent(user: CustomUser) -> None:

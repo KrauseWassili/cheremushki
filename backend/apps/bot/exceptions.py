@@ -5,8 +5,8 @@ Die Bot-API antwortet strukturiert (error_code, description, parameters.retry_af
 Diese Information darf nicht in einem f-String
 verschwinden.
 
-Der Textvergleich in :meth: TelegramAPIError.is_not_modified und
-:meth: ~TelegramAPIError.is_message_gone bleibt bestehen: Telegram liefert für
+Der Textvergleich in :meth:`TelegramAPIError.is_not_modified` und
+:meth:`~TelegramAPIError.is_message_gone` bleibt bestehen: Telegram liefert für
 all diese Fälle error_code: 400, unterscheidbar sind sie nur über die
 englische Beschreibung. Der Unterschied ist, dass der Vergleich hier an genau
 einer Stelle steht, einen Namen hat und ohne HTTP-Mock testbar ist.
@@ -34,6 +34,10 @@ class TelegramTransportError(TelegramError):
     Trägt bewusst weder die URL noch die ursprüngliche requests Exception:
     beide enthalten den Bot-Token, und diese Exception wird geloggt.
     """
+
+    # Timeout, Verbindungsabbruch oder eine HTML-Fehlerseite eines Proxys:
+    # Telegram hat die Anfrage nie bewertet, der nächste Versuch kann klappen.
+    retryable = True
 
 
 class TelegramAPIError(TelegramError):
@@ -79,3 +83,15 @@ class TelegramAPIError(TelegramError):
     @property
     def is_rate_limited(self) -> bool:
         return self.status_code == 429 or self.retry_after is not None
+
+    @property
+    def retryable(self) -> bool:
+        """
+        Lohnt ein erneuter Versuch derselben Anfrage?
+
+        Nur Drosselung (429) und Serverfehler (5xx) sind vorübergehend. Alle
+        übrigen 4xx – ungültiges Token (401), Bot nicht Admin (400/403),
+        falsche Chat-ID – scheitern beim nächsten Versuch genauso und gehören
+        als Fehlkonfiguration sichtbar gemacht, nicht in die Retry-Schleife.
+        """
+        return self.is_rate_limited or self.status_code >= 500

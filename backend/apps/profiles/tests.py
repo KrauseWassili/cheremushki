@@ -10,11 +10,14 @@ from django.core.cache import cache
 from django.core.files.base import ContentFile
 from django.core.files.storage import FileSystemStorage, default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.contrib import messages as django_messages
+from django.contrib.admin.sites import site as admin_site
 from django.core.management import CommandError, call_command
 from django.apps import apps as global_apps
 from django.db import connection, transaction
 from django.db.migrations.executor import MigrationExecutor
 from django.test import (
+    RequestFactory,
     SimpleTestCase,
     TestCase,
     TransactionTestCase,
@@ -28,6 +31,8 @@ from rest_framework.throttling import ScopedRateThrottle
 from apps.accounts.models import CustomUser
 from apps.accounts.services.email import ResendError
 from apps.bot.models import TelegramInvite
+from apps.bot.services.invites import claim_invite_dispatch
+from apps.bot.tasks.email import send_telegram_invite_email
 
 from .avatar_files import (
     AVATAR_DIR,
@@ -40,6 +45,7 @@ from .avatar_files import (
     strip_image_metadata,
 )
 from . import views as profile_views
+from .admin import MemberProfileAdmin
 from .hashtags import (
     MAX_HASHTAG_LENGTH,
     InvalidHashtag,
@@ -55,7 +61,9 @@ from .models import (
     MemberProfile,
     ProfileTag,
 )
+from .permissions import NOT_GROUP_MEMBER_CODE, NotGroupMember
 from .serializers import MAX_PROFILE_TAGS
+from .slugs import MAX_SLUG_BASE_LENGTH, slug_base, unique_slug
 from .tasks import send_contact_request_email
 from .services import MAX_SUGGESTION_LIMIT
 from .tag_vocabulary import (
@@ -249,6 +257,13 @@ class RefreshDirectoryVisibilityTests(SimpleTestCase):
         self.assertFalse(profile.refresh_directory_visibility(save=False))
 
 
+def make_group_member(user: CustomUser) -> None:
+    """Macht den Nutzer zum Gruppenmitglied – Voraussetzung fürs Verzeichnis."""
+    TelegramInvite.objects.update_or_create(
+        user=user, defaults={"used": True, "used_at": timezone.now()}
+    )
+
+
 class MyProfileEndpointTests(TestCase):
     def setUp(self):
         mock.patch(
@@ -310,6 +325,7 @@ class MyProfileEndpointTests(TestCase):
         )
         profile.ensure_unique_slug()
         profile.save()
+        make_group_member(self.user)
 
         response = self.client.get(f"/api/v1/profiles/{profile.slug}/")
         self.assertEqual(response.status_code, 200)
@@ -723,6 +739,7 @@ class DirectoryTagFilterTests(TestCase):
         cls.only_it = make_visible_profile("it@example.com")
         cls.only_it.tags.set([cls.tags["it"]])
         cls.untagged = make_visible_profile("none@example.com")
+        make_group_member(cls.both.user)
 
     def setUp(self):
         self.client = APIClient()
@@ -831,6 +848,7 @@ class CitySuggestionEndpointTests(TestCase):
         hidden.is_directory_visible = False
         hidden.save()
         cls.user = second.user
+        make_group_member(cls.user)
 
     def setUp(self):
         self.client = APIClient()
@@ -1554,6 +1572,20 @@ class AvatarUploadTestBase(TempMediaRootMixin, TestCase):
         payload = {"avatar": image_upload(), **extra}
         return self.client.post(AVATAR_URL, payload, format="multipart")
 
+    def simulate_successful_invite(self) -> None:
+        """Der gemockte Task markiert die Einladung als versandt wie der echte.
+
+        Ohne das bliebe invite_sent_at leer, und jedes weitere Speichern
+        stieße – als Nachholweg gewollt – den Versand erneut an.
+        """
+
+        def mark_sent(user_id: int) -> None:
+            TelegramInvite.objects.update_or_create(
+                user_id=user_id, defaults={"invite_sent_at": timezone.now()}
+            )
+
+        self.invite_delay.side_effect = mark_sent
+
 
 class AvatarUploadValidationTests(AvatarUploadTestBase):
     def test_avatar_upload_rejects_file_over_five_megabytes(self):
@@ -1650,6 +1682,7 @@ class AvatarUploadPersistenceTests(AvatarUploadTestBase):
     def test_avatar_upload_completing_profile_sends_invite_exactly_once(self):
         # Alle Textpflichtfelder sind gefüllt, nur der Avatar fehlt → der
         # erste Upload ist die Flanke, der zweite nicht mehr.
+        self.simulate_successful_invite()
         first = self.upload()
         second = self.upload()
 
@@ -1798,6 +1831,7 @@ class AvatarOriginalEndpointTests(AvatarUploadTestBase):
         self.upload(avatar_original=image_upload("orig.png"))
         self.profile.refresh_from_db()
         self.assertTrue(self.profile.is_directory_visible)
+        make_group_member(self.user)
 
         response = self.client.get(f"/api/v1/profiles/{self.profile.slug}/")
 
@@ -2534,6 +2568,7 @@ class ProfilePatchConcurrencyTests(AvatarUploadTestBase):
         self.assertEqual(self.upload().status_code, 200)
         self.invite_delay.assert_not_called()
         self.sync_post.reset_mock()
+        self.simulate_successful_invite()
 
         first = self.client.patch(PROFILE_ME_URL, {"bio": "Über mich"}, format="json")
         second = self.client.patch(PROFILE_ME_URL, {"bio": "Noch mehr"}, format="json")
@@ -2543,3 +2578,670 @@ class ProfilePatchConcurrencyTests(AvatarUploadTestBase):
         self.assertEqual(second.status_code, 200)
         self.invite_delay.assert_called_once_with(self.user.pk)
         self.assertEqual(self.sync_post.call_count, 2)
+
+
+class InviteDispatchDebounceTests(AvatarUploadTestBase):
+    """
+    Dispatch-Sperre (claim_invite_dispatch): Solange der erste Task noch
+    läuft oder auf seinen Retry wartet, ist invite_sent_at leer – ohne Sperre
+    stieße jedes weitere Speichern über den Nachholweg einen zweiten Task an.
+    Der Task ist hier gemockt und markiert nichts, wie ein Task in der Queue.
+    """
+
+    def test_dispatch_avatar_completes_profile_then_patch_dispatches_once(self):
+        # AvatarUploadTestBase: alle Textfelder gefüllt, Avatar fehlt.
+        self.assertEqual(self.upload().status_code, 200)
+        self.invite_delay.assert_called_once_with(self.user.pk)
+
+        response = self.client.patch(
+            PROFILE_ME_URL, {"bio": "Gleich danach"}, format="json"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["directory_ready"])
+        self.assertFalse(response.data["invite_sent"])
+        self.invite_delay.assert_called_once_with(self.user.pk)
+
+    def test_dispatch_avatar_then_patch_with_real_task_sends_one_mail(self):
+        self.invite_delay.side_effect = send_telegram_invite_email
+        create_link = mock.patch(
+            "apps.bot.tasks.email.create_single_use_invite_link",
+            return_value="https://t.me/+abc123",
+        ).start()
+        send_email = mock.patch("apps.bot.tasks.email.send_email").start()
+
+        self.assertEqual(self.upload().status_code, 200)
+        response = self.client.patch(
+            PROFILE_ME_URL, {"bio": "Gleich danach"}, format="json"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["invite_sent"])
+        send_email.assert_called_once()
+        create_link.assert_called_once()
+        self.assertEqual(self.invite_delay.call_count, 1)
+
+    # --- Staff: weder Flanke noch Nachholweg ------------------------------
+
+    def make_staff(self) -> None:
+        CustomUser.objects.filter(pk=self.user.pk).update(is_staff=True)
+        self.user.refresh_from_db()
+        self.client.force_authenticate(self.user)
+
+    def assert_dispatch_lock_free(self) -> None:
+        # Ist die Sperre frei, gewinnt der nächste Claim. (Der Aufruf belegt
+        # sie danach selbst – daher nur am Testende.)
+        self.assertTrue(claim_invite_dispatch(self.user.pk))
+
+    def test_dispatch_staff_reaching_edge_gets_no_invite(self):
+        self.make_staff()
+
+        response = self.upload()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["directory_ready"])
+        self.invite_delay.assert_not_called()
+        # Der Profilpost läuft trotzdem – der Task entscheidet selbst.
+        self.sync_post.assert_called_once_with(self.user.pk)
+        self.assert_dispatch_lock_free()
+
+    def test_dispatch_staff_recovery_path_with_unused_invite_gets_no_invite(self):
+        self.make_staff()
+        MemberProfile.objects.filter(pk=self.profile.pk).update(
+            avatar="avatars/user-1.jpg", is_directory_visible=True
+        )
+        TelegramInvite.objects.create(user=self.user, used=False)
+
+        response = self.client.patch(PROFILE_ME_URL, {"bio": "Neu"}, format="json")
+
+        self.assertEqual(response.status_code, 200)
+        self.invite_delay.assert_not_called()
+        self.assert_dispatch_lock_free()
+
+
+# --- E2E F4: Verzeichnis nur für Gruppenmitglieder ----------------------- #
+
+DIRECTORY_URL = "/api/v1/profiles/"
+PROFILE_ME_URL_F4 = "/api/v1/profiles/user/me/"
+
+
+def make_user(email: str, **fields) -> CustomUser:
+    return CustomUser.objects.create_user(
+        email=email,
+        password="Str0ng!Passwort",
+        first_name=fields.pop("first_name", "Boris"),
+        last_name=fields.pop("last_name", "C"),
+        is_active=fields.pop("is_active", True),
+        **fields,
+    )
+
+
+@override_settings(CACHES=LOCMEM_CACHE)
+class DirectoryGateTests(TestCase):
+    """
+    Liste, Detail, Städte und Kontaktanfrage nur für Mitglieder der
+    Telegram-Gruppe (used=True) oder Staff.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.target = make_visible_profile(
+            "target@example.com", contact_mode=ContactMode.REQUEST
+        )
+
+    def setUp(self):
+        cache.clear()
+        self.contact_delay = mock.patch(
+            "apps.profiles.tasks.send_contact_request_email.delay"
+        ).start()
+        self.addCleanup(mock.patch.stopall)
+        self.viewer = make_user("viewer@example.com")
+        self.client = APIClient()
+        self.client.force_authenticate(self.viewer)
+
+    def read_urls(self) -> list[str]:
+        return [
+            DIRECTORY_URL,
+            f"{DIRECTORY_URL}{self.target.slug}/",
+            f"{DIRECTORY_URL}cities/",
+        ]
+
+    def contact_request(self, client: APIClient | None = None):
+        return (client or self.client).post(
+            f"{DIRECTORY_URL}{self.target.slug}/contact-request/",
+            {"message": "Привет!"},
+            format="json",
+        )
+
+    def assert_not_group_member(self, response) -> None:
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json(),
+            {"detail": NotGroupMember.default_detail, "code": NOT_GROUP_MEMBER_CODE},
+        )
+        # Nutzertext auf Russisch, per "ты".
+        self.assertIn("Заполни профиль", response.json()["detail"])
+
+    def test_directory_gate_non_member_gets_403_on_read_endpoints(self):
+        for url in self.read_urls():
+            with self.subTest(url=url):
+                self.assert_not_group_member(self.client.get(url))
+
+    def test_directory_gate_non_member_cannot_send_contact_request(self):
+        self.assert_not_group_member(self.contact_request())
+        self.assertFalse(ContactRequest.objects.exists())
+        self.contact_delay.assert_not_called()
+
+    def test_directory_gate_member_gets_200(self):
+        make_group_member(self.viewer)
+        for url in self.read_urls():
+            with self.subTest(url=url):
+                self.assertEqual(self.client.get(url).status_code, 200)
+
+    def test_directory_gate_member_can_send_contact_request(self):
+        make_group_member(self.viewer)
+        self.assertEqual(self.contact_request().status_code, 201)
+        self.contact_delay.assert_called_once()
+
+    def test_directory_gate_sent_but_unused_invite_still_gets_403(self):
+        # Einladung verschickt, Gruppe aber (noch) nicht beigetreten.
+        TelegramInvite.objects.create(
+            user=self.viewer,
+            invite_link="https://t.me/+abc123",
+            invite_sent_at=timezone.now(),
+            used=False,
+        )
+        for url in self.read_urls():
+            with self.subTest(url=url):
+                self.assert_not_group_member(self.client.get(url))
+
+    def test_directory_gate_anonymous_gets_401(self):
+        anonymous = APIClient()
+        for url in self.read_urls():
+            with self.subTest(url=url):
+                self.assertEqual(anonymous.get(url).status_code, 401)
+        self.assertEqual(self.contact_request(anonymous).status_code, 401)
+
+    def test_directory_gate_inactive_user_does_not_get_member_403(self):
+        # IsActiveAuthenticated greift zuerst: Ein deaktiviertes Konto
+        # bekommt den allgemeinen 403, nicht den Hinweis auf die Gruppe.
+        inactive = make_user("inactive@example.com", is_active=False)
+        client = APIClient()
+        client.force_authenticate(inactive)
+
+        response = client.get(DIRECTORY_URL)
+
+        self.assertEqual(response.status_code, 403)
+        self.assertNotEqual(response.json().get("code"), NOT_GROUP_MEMBER_CODE)
+
+    def test_directory_gate_staff_without_invite_gets_200(self):
+        staff = make_user("staff@example.com", is_staff=True)
+        client = APIClient()
+        client.force_authenticate(staff)
+        for url in self.read_urls():
+            with self.subTest(url=url):
+                self.assertEqual(client.get(url).status_code, 200)
+
+    def test_directory_gate_tag_suggestions_open_for_non_member(self):
+        # Der Tag-Picker im eigenen Profil braucht die Liste vor dem Beitritt.
+        self.assertEqual(self.client.get(f"{DIRECTORY_URL}tags/").status_code, 200)
+
+
+class DirectoryGateOwnProfileTests(AvatarUploadTestBase):
+    """
+    Das eigene Profil bleibt ohne Mitgliedschaft bearbeitbar – sonst käme
+    niemand je zur Einladung. can_view_directory sagt dem Frontend, ob das
+    Verzeichnis offen ist.
+    """
+
+    def test_own_profile_get_and_patch_work_without_membership(self):
+        self.assertEqual(self.client.get(PROFILE_ME_URL_F4).status_code, 200)
+        response = self.client.patch(PROFILE_ME_URL_F4, {"bio": "Neu"}, format="json")
+        self.assertEqual(response.status_code, 200)
+
+    def test_own_avatar_upload_and_original_work_without_membership(self):
+        upload = self.upload(avatar_original=image_upload("orig.png"))
+        self.assertEqual(upload.status_code, 200)
+        self.assertEqual(self.client.get(AVATAR_ORIGINAL_URL).status_code, 200)
+
+    def test_can_view_directory_in_get_me_switches_after_joining(self):
+        self.assertIs(
+            self.client.get(PROFILE_ME_URL_F4).data["can_view_directory"], False
+        )
+        make_group_member(self.user)
+        self.assertIs(
+            self.client.get(PROFILE_ME_URL_F4).data["can_view_directory"], True
+        )
+
+    def test_can_view_directory_in_patch_response(self):
+        response = self.client.patch(PROFILE_ME_URL_F4, {"bio": "A"}, format="json")
+        self.assertIs(response.data["can_view_directory"], False)
+
+        make_group_member(self.user)
+        response = self.client.patch(PROFILE_ME_URL_F4, {"bio": "B"}, format="json")
+        self.assertIs(response.data["can_view_directory"], True)
+
+    def test_can_view_directory_in_avatar_upload_response(self):
+        self.assertIs(self.upload().data["can_view_directory"], False)
+        make_group_member(self.user)
+        self.assertIs(self.upload().data["can_view_directory"], True)
+
+    def test_can_view_directory_true_for_staff_without_invite(self):
+        CustomUser.objects.filter(pk=self.user.pk).update(is_staff=True)
+        self.user.refresh_from_db()
+        self.client.force_authenticate(self.user)
+
+        response = self.client.get(PROFILE_ME_URL_F4)
+
+        self.assertIs(response.data["can_view_directory"], True)
+
+
+# --- E2E F3: Admin-Action "Telegram-Einladung erneut senden" ------------- #
+
+
+@override_settings(CACHES=LOCMEM_CACHE)
+class ResendTelegramInviteAdminActionTests(TestCase):
+    def setUp(self):
+        # Die Action setzt die Dispatch-Sperre neu.
+        cache.clear()
+        self.invite_delay = mock.patch(
+            "apps.bot.tasks.email.send_telegram_invite_email.delay"
+        ).start()
+        self.addCleanup(mock.patch.stopall)
+        self.model_admin = MemberProfileAdmin(MemberProfile, admin_site)
+        self.message_user = mock.patch.object(self.model_admin, "message_user").start()
+        self.request = RequestFactory().post("/admin/profiles/memberprofile/")
+        self.sent_at = timezone.now()
+
+    def make_profile_with_invite(
+        self, email: str, *, complete: bool = True, **invite_fields
+    ) -> MemberProfile:
+        avatar = "avatars/user-1.jpg" if complete else None
+        profile = make_visible_profile(email, avatar=avatar)
+        TelegramInvite.objects.create(
+            user=profile.user,
+            invite_link=f"https://t.me/+{profile.user_id}",
+            invite_sent_at=self.sent_at,
+            **invite_fields,
+        )
+        return profile
+
+    def run_action(self, *profiles: MemberProfile) -> list:
+        queryset = MemberProfile.objects.filter(pk__in=[p.pk for p in profiles])
+        with self.captureOnCommitCallbacks(execute=False) as callbacks:
+            self.model_admin.resend_telegram_invite(self.request, queryset)
+        return callbacks
+
+    def message(self) -> tuple[str, int]:
+        args = self.message_user.call_args.args
+        return args[1], args[2]
+
+    def test_admin_resend_complete_unjoined_profile_resets_and_enqueues(self):
+        profile = self.make_profile_with_invite("anna@example.com")
+
+        callbacks = self.run_action(profile)
+
+        invite = TelegramInvite.objects.get(user=profile.user)
+        self.assertIsNone(invite.invite_sent_at)
+        self.assertEqual(invite.invite_link, f"https://t.me/+{profile.user_id}")
+        # Erst nach dem Commit: Der Worker soll das zurückgesetzte Feld sehen.
+        self.invite_delay.assert_not_called()
+        self.assertEqual(len(callbacks), 1)
+        callbacks[0]()
+        self.invite_delay.assert_called_once_with(profile.user_id)
+
+    def test_admin_resend_skips_joined_member(self):
+        profile = self.make_profile_with_invite("joined@example.com", used=True)
+
+        callbacks = self.run_action(profile)
+
+        invite = TelegramInvite.objects.get(user=profile.user)
+        self.assertEqual(invite.invite_sent_at, self.sent_at)
+        self.assertTrue(invite.used)
+        self.assertEqual(callbacks, [])
+        self.invite_delay.assert_not_called()
+
+    def test_admin_resend_skips_incomplete_profile(self):
+        profile = self.make_profile_with_invite("half@example.com", complete=False)
+
+        callbacks = self.run_action(profile)
+
+        invite = TelegramInvite.objects.get(user=profile.user)
+        self.assertEqual(invite.invite_sent_at, self.sent_at)
+        self.assertEqual(callbacks, [])
+        self.invite_delay.assert_not_called()
+
+    def test_admin_resend_message_counts_each_outcome(self):
+        queued = self.make_profile_with_invite("a@example.com")
+        incomplete = self.make_profile_with_invite("b@example.com", complete=False)
+        joined = self.make_profile_with_invite("c@example.com", used=True)
+
+        self.run_action(queued, incomplete, joined)
+
+        text, level = self.message()
+        self.assertIn("Einladung angestoßen: 1", text)
+        self.assertIn("unvollständig: 1", text)
+        self.assertIn("beigetreten: 1", text)
+        self.assertEqual(level, django_messages.SUCCESS)
+
+    def test_admin_resend_sets_dispatch_lock(self):
+        profile = self.make_profile_with_invite("anna@example.com")
+
+        self.run_action(profile)
+
+        # force=True hat die Sperre gesetzt: Ein normaler Claim geht leer aus.
+        self.assertFalse(claim_invite_dispatch(profile.user_id))
+
+    def test_admin_resend_overrides_existing_dispatch_lock(self):
+        profile = self.make_profile_with_invite("anna@example.com")
+        claim_invite_dispatch(profile.user_id)  # Sperre aus früherem Anlauf
+
+        callbacks = self.run_action(profile)
+
+        self.assertEqual(len(callbacks), 1)
+
+    def test_admin_resend_then_user_patch_does_not_dispatch_again(self):
+        mock.patch(
+            "apps.bot.tasks.profile_post.sync_telegram_profile_post.delay"
+        ).start()
+        profile = self.make_profile_with_invite("anna@example.com")
+        for callback in self.run_action(profile):
+            callback()
+        self.invite_delay.assert_called_once_with(profile.user_id)
+        # Der gemockte Task markiert nichts: invite_sent_at bleibt leer, der
+        # Nachholweg würde ohne Sperre sofort einen zweiten Task anstoßen.
+        client = APIClient()
+        client.force_authenticate(profile.user)
+
+        response = client.patch(PROFILE_ME_URL, {"bio": "Gleich danach"}, format="json")
+
+        self.assertEqual(response.status_code, 200)
+        self.invite_delay.assert_called_once_with(profile.user_id)
+
+    def test_admin_resend_message_warns_when_nothing_queued(self):
+        joined = self.make_profile_with_invite("c@example.com", used=True)
+
+        self.run_action(joined)
+
+        text, level = self.message()
+        self.assertIn("Einladung angestoßen: 0", text)
+        self.assertIn("beigetreten: 1", text)
+        self.assertEqual(level, django_messages.WARNING)
+
+
+# --- E2E F6: Slugs aus kyrillischen Namen -------------------------------- #
+
+
+class SlugBaseTests(SimpleTestCase):
+    def test_slug_base_cyrillic_full_name(self):
+        self.assertEqual(slug_base("Анна Тестова"), "anna-testova")
+
+    def test_slug_base_special_letters(self):
+        # "а" davor, damit ь/ъ (→ "") nicht in den Fallback fallen.
+        expected = {
+            "ж": "zh",
+            "х": "kh",
+            "ц": "ts",
+            "ч": "ch",
+            "ш": "sh",
+            "щ": "shch",
+            "ы": "y",
+            "ь": "",
+            "ъ": "",
+            "э": "e",
+            "ю": "yu",
+            "я": "ya",
+            "ё": "e",
+            "й": "y",
+            "і": "i",  # ukrainisch
+            "ї": "yi",
+            "є": "ye",
+            "ґ": "g",
+            "ў": "u",  # belarussisch
+        }
+        for letter, latin in expected.items():
+            with self.subTest(letter=letter):
+                self.assertEqual(slug_base(f"а{letter}"), f"a{latin}")
+
+    def test_slug_base_upper_case(self):
+        self.assertEqual(slug_base("АННА ТЕСТОВА"), "anna-testova")
+        self.assertEqual(slug_base("ЩЁЛКОВ"), "shchelkov")
+        self.assertEqual(slug_base("ЇЖАК"), "yizhak")
+
+    def test_slug_base_mixed_latin_and_cyrillic(self):
+        self.assertEqual(slug_base("Anna Тестова"), "anna-testova")
+        # Akzente erledigt slugify(): ë → e.
+        self.assertEqual(slug_base("Zoë-Петрова"), "zoe-petrova")
+
+    def test_slug_base_without_letters_falls_back_to_random_token(self):
+        for source in ("🙂🙂", "!!! ---", "-", "", "ъь"):
+            with self.subTest(source=source):
+                self.assertRegex(slug_base(source), r"\Amember-[0-9a-f]{8}\Z")
+
+    def test_slug_base_fallback_is_random_per_call(self):
+        # 32 Zufallsbit: Eine Kollision ist praktisch ausgeschlossen.
+        self.assertNotEqual(slug_base("🙂"), slug_base("🙂"))
+
+    def test_slug_base_long_name_is_truncated(self):
+        base = slug_base("щ" * 100)  # 400 Zeichen nach der Umschrift
+        self.assertLessEqual(len(base), MAX_SLUG_BASE_LENGTH)
+        self.assertFalse(base.endswith("-"))
+
+    def test_slug_base_cut_on_hyphen_strips_it(self):
+        # 71 "a" + "-shch": Der Schnitt bei 72 liegt genau hinter dem "-".
+        self.assertEqual(slug_base("a" * 71 + " щ"), "a" * 71)
+
+
+class UniqueSlugTests(SimpleTestCase):
+    def test_unique_slug_free_base_is_kept(self):
+        self.assertEqual(unique_slug("anna", lambda slug: False), "anna")
+
+    def test_unique_slug_reserved_base_gets_counter(self):
+        self.assertEqual(unique_slug("tags", lambda slug: False), "tags-2")
+
+    def test_unique_slug_counts_up_past_taken_slugs(self):
+        taken = {"anna"}
+        self.assertEqual(unique_slug("anna", taken.__contains__), "anna-2")
+        taken.add("anna-2")
+        self.assertEqual(unique_slug("anna", taken.__contains__), "anna-3")
+
+
+class EnsureUniqueSlugCyrillicTests(TestCase):
+    def make_profile(self, email: str) -> MemberProfile:
+        user = make_user(email, first_name="Анна", last_name="Тестова")
+        profile = MemberProfile(user=user)
+        profile.ensure_unique_slug()
+        profile.save()
+        return profile
+
+    def test_ensure_unique_slug_transliterates_cyrillic_name(self):
+        self.assertEqual(self.make_profile("a@example.com").slug, "anna-testova")
+
+    def test_ensure_unique_slug_same_name_gets_counter(self):
+        self.make_profile("a@example.com")
+        self.assertEqual(self.make_profile("b@example.com").slug, "anna-testova-2")
+
+    def test_ensure_unique_slug_keeps_slug_after_name_change(self):
+        profile = self.make_profile("a@example.com")
+        profile.user.first_name = "Мария"
+        profile.user.save()
+
+        profile.ensure_unique_slug()
+
+        self.assertEqual(profile.slug, "anna-testova")
+
+    def test_ensure_unique_slug_fallback_never_uses_user_id(self):
+        user = make_user("emoji@example.com", first_name="🙂", last_name="")
+        profile = MemberProfile(user=user)
+
+        profile.ensure_unique_slug()
+
+        self.assertRegex(profile.slug, r"\Amember-[0-9a-f]{8}\Z")
+        self.assertNotEqual(profile.slug, f"member-{user.pk}")
+
+
+MIGRATION_0009 = "0009_regenerate_pk_fallback_slugs"
+
+
+def load_migration_0009():
+    import importlib
+
+    return importlib.import_module(f"apps.profiles.migrations.{MIGRATION_0009}")
+
+
+class RegeneratePkFallbackSlugsMigrationTests(TestCase):
+    """
+    Die Forward-Funktion von 0009 direkt mit der aktuellen App-Registry – wie
+    CommunityTagMigrationFunctionTests. Die Slugs werden hier von Hand
+    gesetzt, weil der heutige Code keine member-<id>-Slugs mehr erzeugt.
+    """
+
+    def setUp(self):
+        self.migration = load_migration_0009()
+
+    def profile(self, email: str, slug_for, **names) -> MemberProfile:
+        """slug_for bekommt die user_id und liefert den Ausgangs-Slug."""
+        user = make_user(email, **names)
+        return MemberProfile.objects.create(user=user, slug=slug_for(user.pk))
+
+    def run_migration(self) -> None:
+        self.migration.regenerate_pk_fallback_slugs(global_apps, None)
+
+    def slug_of(self, profile: MemberProfile) -> str:
+        profile.refresh_from_db()
+        return profile.slug
+
+    def test_migration_0009_replaces_own_pk_fallback(self):
+        profile = self.profile(
+            "a@example.com",
+            lambda pk: f"member-{pk}",
+            first_name="Анна",
+            last_name="Тестова",
+        )
+        self.run_migration()
+        self.assertEqual(self.slug_of(profile), "anna-testova")
+
+    def test_migration_0009_keeps_foreign_and_custom_slugs(self):
+        other_id = self.profile(
+            "a@example.com", lambda pk: f"member-{pk + 1000}", first_name="Анна"
+        )
+        not_numeric = self.profile(
+            "b@example.com", lambda pk: f"member-{pk}x", first_name="Анна"
+        )
+        custom = self.profile("c@example.com", lambda pk: "annas-seite")
+
+        self.run_migration()
+
+        for profile, expected in (
+            (other_id, f"member-{other_id.user_id + 1000}"),
+            (not_numeric, f"member-{not_numeric.user_id}x"),
+            (custom, "annas-seite"),
+        ):
+            with self.subTest(slug=expected):
+                self.assertEqual(self.slug_of(profile), expected)
+
+    def test_migration_0009_keeps_member_1x_slug(self):
+        profile = self.profile("a@example.com", lambda pk: "member-1x")
+        self.run_migration()
+        self.assertEqual(self.slug_of(profile), "member-1x")
+
+    def test_migration_0009_deleted_account_gets_deleted_slug(self):
+        user = make_user("tmp@example.com", first_name="Удалён", last_name="")
+        CustomUser.objects.filter(pk=user.pk).update(
+            email=f"deleted-{user.pk}@deleted.local"
+        )
+        profile = MemberProfile.objects.create(user=user, slug=f"member-{user.pk}")
+
+        self.run_migration()
+
+        self.assertEqual(self.slug_of(profile), f"deleted-{user.pk}")
+
+    def test_migration_0009_deleted_account_with_taken_deleted_slug_gets_counter(self):
+        user = make_user("tmp@example.com", first_name="Удалён", last_name="")
+        CustomUser.objects.filter(pk=user.pk).update(
+            email=f"deleted-{user.pk}@deleted.local"
+        )
+        # Ein anderes Profil trägt den Slug schon (z. B. von Hand vergeben).
+        squatter = self.profile("b@example.com", lambda pk: f"deleted-{user.pk}")
+        profile = MemberProfile.objects.create(user=user, slug=f"member-{user.pk}")
+
+        self.run_migration()
+
+        self.assertEqual(self.slug_of(profile), f"deleted-{user.pk}-2")
+        self.assertEqual(self.slug_of(squatter), f"deleted-{user.pk}")
+
+    def test_migration_0009_same_names_in_one_run_get_counter(self):
+        names = {"first_name": "Анна", "last_name": "Тестова"}
+        first = self.profile("a@example.com", lambda pk: f"member-{pk}", **names)
+        second = self.profile("b@example.com", lambda pk: f"member-{pk}", **names)
+
+        self.run_migration()
+
+        self.assertEqual(
+            {self.slug_of(first), self.slug_of(second)},
+            {"anna-testova", "anna-testova-2"},
+        )
+
+    def test_migration_0009_avoids_existing_slug(self):
+        names = {"first_name": "Анна", "last_name": "Тестова"}
+        self.profile("a@example.com", lambda pk: "anna-testova")
+        legacy = self.profile("b@example.com", lambda pk: f"member-{pk}", **names)
+
+        self.run_migration()
+
+        self.assertEqual(self.slug_of(legacy), "anna-testova-2")
+
+    def test_migration_0009_second_run_is_noop(self):
+        names = {"first_name": "Анна", "last_name": "Тестова"}
+        self.profile("a@example.com", lambda pk: f"member-{pk}", **names)
+        self.profile("b@example.com", lambda pk: f"member-{pk}", first_name="🙂")
+        self.run_migration()
+        after_first = dict(MemberProfile.objects.values_list("pk", "slug"))
+
+        self.run_migration()
+
+        self.assertEqual(
+            dict(MemberProfile.objects.values_list("pk", "slug")), after_first
+        )
+
+
+@override_settings(CACHES=LOCMEM_CACHE)
+class PatchWithoutSlugTests(TestCase):
+    """
+    Das Frontend lässt einen leeren Slug im PATCH weg (lib/profiles.ts). Das
+    Backend erzeugt ihn dann selbst – und lässt einen vorhandenen stehen.
+    """
+
+    def setUp(self):
+        cache.clear()
+        mock.patch("apps.bot.tasks.email.send_telegram_invite_email.delay").start()
+        mock.patch(
+            "apps.bot.tasks.profile_post.sync_telegram_profile_post.delay"
+        ).start()
+        self.addCleanup(mock.patch.stopall)
+        self.user = make_user(
+            "anna@example.com", first_name="Анна", last_name="Тестова"
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def test_patch_without_slug_on_profile_without_slug_generates_transliteration(self):
+        # Altbestand: Profil ohne Slug (slug ist blank=True, default="").
+        profile = MemberProfile.objects.create(user=self.user, slug="")
+
+        response = self.client.patch(PROFILE_ME_URL, {"city": "Бремен"}, format="json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["slug"], "anna-testova")
+        profile.refresh_from_db()
+        self.assertEqual(profile.slug, "anna-testova")
+
+    def test_patch_without_slug_keeps_existing_slug(self):
+        profile = MemberProfile.objects.create(user=self.user, slug="annas-seite")
+
+        response = self.client.patch(PROFILE_ME_URL, {"city": "Бремен"}, format="json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["slug"], "annas-seite")
+        profile.refresh_from_db()
+        self.assertEqual(profile.slug, "annas-seite")

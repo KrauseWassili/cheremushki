@@ -40,6 +40,7 @@ from apps.accounts.tasks import (
 from apps.accounts.tokens import email_change_token_generator
 from apps.bot.exceptions import TelegramAPIError
 from apps.bot.models import TelegramInvite
+from apps.bot.services.invites import claim_invite_dispatch, is_group_member
 from apps.bot.services.telegram import find_invite_by_telegram_user_id
 from apps.bot.tasks.account import purge_telegram_presence
 from apps.bot.tasks.email import send_telegram_invite_email
@@ -399,6 +400,305 @@ class InviteGateTests(TestCase):
         )
 
 
+@override_settings(CACHES=LOCMEM_CACHE)
+class InviteRecoveryTests(TestCase):
+    """
+    Nachholweg (E2E F3): Ein vollständiges, sichtbares Profil mit offener
+    Einladung stößt den Versand bei jedem Speichern erneut an. Der Task wird
+    hier nur als Mock beobachtet – ob er tatsächlich versendet, prüft
+    InviteRecoveryChainTests.
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.invite_delay = mock.patch(
+            "apps.bot.tasks.email.send_telegram_invite_email.delay"
+        ).start()
+        mock.patch(
+            "apps.bot.tasks.profile_post.sync_telegram_profile_post.delay"
+        ).start()
+        self.addCleanup(mock.patch.stopall)
+
+        self.user = CustomUser.objects.create_user(
+            email="anna@example.com",
+            password=VALID_PASSWORD,
+            first_name="Anna",
+            last_name="B",
+            is_active=True,
+        )
+        self.profile = MemberProfile(
+            user=self.user,
+            avatar="avatars/user-1.jpg",
+            is_directory_visible=True,
+            **COMPLETE_PROFILE_PAYLOAD,
+        )
+        self.profile.ensure_unique_slug()
+        self.profile.save()
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def patch_bio(self):
+        response = self.client.patch(
+            "/api/v1/profiles/user/me/", {"bio": "Neue Fassung"}, format="json"
+        )
+        self.assertEqual(response.status_code, 200)
+        return response
+
+    def test_recovery_without_invite_row_enqueues_invite(self):
+        self.patch_bio()
+        self.invite_delay.assert_called_once_with(self.user.pk)
+
+    def test_recovery_with_empty_invite_row_enqueues_invite(self):
+        TelegramInvite.objects.create(user=self.user)
+        self.patch_bio()
+        self.invite_delay.assert_called_once_with(self.user.pk)
+
+    def test_recovery_with_link_but_unsent_mail_enqueues_invite(self):
+        TelegramInvite.objects.create(user=self.user, invite_link="https://t.me/+a")
+        self.patch_bio()
+        self.invite_delay.assert_called_once_with(self.user.pk)
+
+    def test_recovery_skips_already_sent_invite(self):
+        TelegramInvite.objects.create(user=self.user, invite_sent_at=timezone.now())
+        self.patch_bio()
+        self.invite_delay.assert_not_called()
+
+    def test_recovery_skips_joined_member(self):
+        TelegramInvite.objects.create(user=self.user, used=True)
+        self.patch_bio()
+        self.invite_delay.assert_not_called()
+
+    # --- Dispatch-Sperre auf dem Nachholweg ------------------------------
+
+    def test_recovery_two_patches_in_a_row_dispatch_once(self):
+        # Der gemockte Task markiert nichts: Die Einladung bleibt offen wie
+        # bei einem Task, der noch in der Queue liegt.
+        TelegramInvite.objects.create(user=self.user)
+        self.patch_bio()
+        self.patch_bio()
+        self.invite_delay.assert_called_once_with(self.user.pk)
+
+    def test_recovery_dispatches_again_after_lock_expired(self):
+        TelegramInvite.objects.create(user=self.user)
+        self.patch_bio()
+        self.patch_bio()
+
+        cache.clear()  # Ablauf von INVITE_DISPATCH_DEBOUNCE_SECONDS
+        self.patch_bio()
+
+        self.assertEqual(self.invite_delay.call_count, 2)
+
+    def test_recovery_save_without_dispatch_leaves_lock_free_when_sent(self):
+        TelegramInvite.objects.create(user=self.user, invite_sent_at=timezone.now())
+        self.patch_bio()
+        self.invite_delay.assert_not_called()
+        # Die Sperre ist nicht belegt worden.
+        self.assertTrue(claim_invite_dispatch(self.user.pk))
+
+    def test_recovery_save_without_dispatch_leaves_lock_free_when_incomplete(self):
+        TelegramInvite.objects.create(user=self.user)
+        self.client.patch("/api/v1/profiles/user/me/", {"bio": ""}, format="json")
+        self.invite_delay.assert_not_called()
+        self.assertTrue(claim_invite_dispatch(self.user.pk))
+
+    def test_recovery_incomplete_save_does_not_block_later_edge(self):
+        TelegramInvite.objects.create(user=self.user)
+        # Mehrfach unvollständig speichern, dann vervollständigen: Die Flanke
+        # muss trotzdem sofort anstoßen, ohne auf eine Sperre zu warten.
+        for _ in range(2):
+            response = self.client.patch(
+                "/api/v1/profiles/user/me/", {"bio": ""}, format="json"
+            )
+            self.assertFalse(response.data["directory_ready"])
+        self.invite_delay.assert_not_called()
+
+        self.patch_bio()
+
+        self.invite_delay.assert_called_once_with(self.user.pk)
+
+    def test_recovery_skips_incomplete_profile(self):
+        TelegramInvite.objects.create(user=self.user)
+        response = self.client.patch(
+            "/api/v1/profiles/user/me/", {"bio": ""}, format="json"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data["directory_ready"])
+        self.invite_delay.assert_not_called()
+
+
+@override_settings(CACHES=LOCMEM_CACHE)
+class AccountMeInviteFlagsTests(TestCase):
+    """
+    telegram_joined/has_telegram_invite auf /accounts/user/me/ – dieselben
+    Definitionen wie im Profil-Endpunkt (apps.bot.services.invites).
+    """
+
+    URL = "/api/v1/accounts/user/me/"
+
+    def setUp(self):
+        cache.clear()
+        self.user = CustomUser.objects.create_user(
+            email="anna@example.com",
+            password=VALID_PASSWORD,
+            first_name="Anna",
+            last_name="B",
+            is_active=True,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def flags(self) -> tuple[bool, bool]:
+        response = self.client.get(self.URL)
+        self.assertEqual(response.status_code, 200)
+        return response.data["has_telegram_invite"], response.data["telegram_joined"]
+
+    def test_me_flags_without_invite_row(self):
+        self.assertEqual(self.flags(), (False, False))
+
+    def test_me_flags_with_unsent_invite(self):
+        # Link erzeugt, Mail aber nicht raus.
+        TelegramInvite.objects.create(
+            user=self.user, invite_link="https://t.me/+abc123", invite_sent_at=None
+        )
+        self.assertEqual(self.flags(), (False, False))
+
+    def test_me_flags_with_sent_invite(self):
+        TelegramInvite.objects.create(user=self.user, invite_sent_at=timezone.now())
+        self.assertEqual(self.flags(), (True, False))
+
+    def test_me_flags_after_joining(self):
+        TelegramInvite.objects.create(
+            user=self.user, invite_sent_at=timezone.now(), used=True
+        )
+        self.assertEqual(self.flags(), (True, True))
+
+    def test_me_flags_joined_without_recorded_mail(self):
+        # sync_telegram_profile --mark-joined: used ohne invite_sent_at.
+        TelegramInvite.objects.create(user=self.user, used=True)
+        self.assertEqual(self.flags(), (False, True))
+
+
+@override_settings(CACHES=LOCMEM_CACHE)
+class InviteRecoveryChainTests(TestCase):
+    """
+    Die ganze Kette mit echtem Task: PATCH → trigger_profile_side_effects →
+    Task → Telegram/Resend (gemockt). Fehler des Tasks fängt – wie im echten
+    Betrieb der Celery-Worker – run_like_worker ab, der Request bleibt davon
+    unberührt.
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.task_errors: list[Exception] = []
+        self.invite_delay = mock.patch(
+            "apps.bot.tasks.email.send_telegram_invite_email.delay",
+            side_effect=self.run_like_worker,
+        ).start()
+        self.create_link = mock.patch(
+            "apps.bot.tasks.email.create_single_use_invite_link",
+            return_value="https://t.me/+abc123",
+        ).start()
+        self.send_email = mock.patch("apps.bot.tasks.email.send_email").start()
+        mock.patch(
+            "apps.bot.tasks.profile_post.sync_telegram_profile_post.delay"
+        ).start()
+        mock.patch(
+            "apps.bot.tasks.profile_post.send_profile_completion_reminder.apply_async"
+        ).start()
+        self.addCleanup(mock.patch.stopall)
+
+        self.user = CustomUser.objects.create_user(
+            email="anna@example.com",
+            password=VALID_PASSWORD,
+            first_name="Anna",
+            last_name="B",
+            is_active=True,
+        )
+        TelegramInvite.objects.create(user=self.user)
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def run_like_worker(self, user_id: int) -> None:
+        try:
+            send_telegram_invite_email(user_id)
+        except (TelegramAPIError, ResendError) as exc:
+            # Der Worker protokolliert den gescheiterten Task; festgehalten
+            # wird er hier, damit der Test den Fehlschlag nachweisen kann.
+            self.task_errors.append(exc)
+
+    def invite(self) -> TelegramInvite:
+        return TelegramInvite.objects.get(user=self.user)
+
+    def patch_profile(self, **fields):
+        response = self.client.patch("/api/v1/profiles/user/me/", fields, format="json")
+        self.assertEqual(response.status_code, 200)
+        return response
+
+    def expire_invite_dispatch_debounce(self) -> None:
+        """Simuliert den Ablauf von INVITE_DISPATCH_DEBOUNCE_SECONDS: Erst
+        danach stößt der Nachholweg nach einem gescheiterten Anlauf erneut an."""
+        cache.clear()
+
+    def complete_profile(self) -> None:
+        """Alle Pflichtfelder, der Avatar ohne Flanke – die kommt beim nächsten
+        PATCH."""
+        self.patch_profile(**COMPLETE_PROFILE_PAYLOAD)
+        MemberProfile.objects.filter(user=self.user).update(avatar="avatars/user-1.jpg")
+
+    def test_chain_permanent_link_error_then_next_patch_sends_invite(self):
+        self.complete_profile()
+        self.create_link.side_effect = TelegramAPIError(
+            "createChatInviteLink", 401, {"description": "Unauthorized"}
+        )
+        with self.assertLogs("apps.bot.tasks.email", "ERROR"):
+            self.patch_profile(bio="Erste Fassung")  # Flanke, Versuch scheitert
+
+        self.assertEqual(len(self.task_errors), 1)
+        self.assertIsNone(self.invite().invite_sent_at)
+        self.assertIsNone(self.invite().invite_link)
+        self.send_email.assert_not_called()
+
+        # Konfiguration repariert: Das nächste Speichern nach Ablauf der
+        # Dispatch-Sperre holt nach.
+        self.create_link.side_effect = None
+        self.expire_invite_dispatch_debounce()
+        self.patch_profile(bio="Zweite Fassung")
+
+        invite = self.invite()
+        self.assertIsNotNone(invite.invite_sent_at)
+        self.assertEqual(invite.invite_link, "https://t.me/+abc123")
+        self.send_email.assert_called_once()
+
+        # Danach ist die Einladung draußen: Kein weiterer Anlauf, kein Link.
+        self.patch_profile(bio="Dritte Fassung")
+        self.send_email.assert_called_once()
+        # Zwei Aufrufe: der gescheiterte (kein Link entstanden) und genau
+        # ein erfolgreicher.
+        self.assertEqual(self.create_link.call_count, 2)
+
+    def test_chain_failed_mail_then_next_patch_resends_same_link(self):
+        self.complete_profile()
+        self.send_email.side_effect = ResendError("Resend down", retryable=False)
+        with self.assertLogs("apps.bot.tasks.email", "ERROR"):
+            self.patch_profile(bio="Erste Fassung")
+
+        self.assertEqual(len(self.task_errors), 1)
+        self.assertIsNone(self.invite().invite_sent_at)
+        self.assertEqual(self.invite().invite_link, "https://t.me/+abc123")
+
+        self.send_email.side_effect = None
+        self.expire_invite_dispatch_debounce()
+        self.patch_profile(bio="Zweite Fassung")
+
+        self.assertIsNotNone(self.invite().invite_sent_at)
+        self.assertEqual(self.send_email.call_count, 2)
+        self.assertIn(
+            "https://t.me/+abc123", self.send_email.call_args.kwargs["message"]
+        )
+        # Derselbe Link: kein zweites createChatInviteLink.
+        self.create_link.assert_called_once()
+
+
 def _one_pixel_png() -> SimpleUploadedFile:
     """
     Kleinstes gültiges PNG. ImageField verlangt ein von Pillow lesbares Bild.
@@ -574,6 +874,8 @@ class AccountDeletionTests(TestCase):
             last_name="C",
             is_active=True,
         )
+        # Das Verzeichnis sehen nur Gruppenmitglieder.
+        TelegramInvite.objects.create(user=other, used=True)
         slug = self.profile.slug
         self.delete_account()
 
@@ -581,6 +883,21 @@ class AccountDeletionTests(TestCase):
         client.force_authenticate(other)
         self.assertEqual(client.get(f"/api/v1/profiles/{slug}/").status_code, 404)
         self.assertEqual(client.get("/api/v1/profiles/").data["count"], 0)
+
+    def test_former_member_loses_directory_access_after_deletion(self):
+        """E2E F4: Nach der Löschung (inkl. purge_telegram_presence) ist das
+        Verzeichnis wieder gesperrt."""
+        TelegramInvite.objects.create(user=self.user, used=True)
+        self.assertEqual(self.client.get("/api/v1/profiles/").status_code, 200)
+
+        self.assertEqual(self.delete_account().status_code, 200)
+        with mock.patch("apps.bot.services.telegram._api_call", return_value={}):
+            purge_telegram_presence(self.user.pk)
+
+        self.assertFalse(is_group_member(self.user.pk))
+        # Der Zugang ist zu – egal ob über die Mitgliedschaft oder das
+        # deaktivierte Konto.
+        self.assertEqual(self.client.get("/api/v1/profiles/").status_code, 403)
 
 
 class PurgeTelegramPresenceTests(TestCase):

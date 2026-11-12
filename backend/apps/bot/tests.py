@@ -6,6 +6,8 @@ from pathlib import Path
 from unittest import mock
 
 import requests
+from celery.exceptions import Retry
+from django.conf import settings
 from django.core.cache import cache
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
@@ -23,14 +25,24 @@ from apps.bot.exceptions import TelegramAPIError, TelegramTransportError
 from apps.bot.models import TelegramInvite
 from apps.bot.permissions import SECRET_HEADER, IsTelegramWebhook
 from apps.bot.services import telegram as telegram_service
+from apps.bot.services.invites import (
+    INVITE_DISPATCH_DEBOUNCE_SECONDS,
+    claim_invite_dispatch,
+    has_invite_been_sent,
+    is_group_member,
+    is_invite_pending,
+    release_invite_for_resend,
+)
 from apps.bot.services.profile_card import (
     CAPTION_MAX_LENGTH,
     build_profile_caption,
     build_profile_keyboard,
+    build_profile_url,
     generate_placeholder_avatar,
     resolve_avatar_bytes,
 )
 from apps.bot.tasks import telegram_user as telegram_user_tasks
+from apps.bot.tasks.email import send_telegram_invite_email
 from apps.bot.tasks.profile_post import send_profile_completion_reminder
 from apps.profiles.models import ContactMode, MemberProfile
 
@@ -772,3 +784,309 @@ class ResolveAvatarBytesTests(TestCase):
 
         self.assertEqual(name, "avatar.png")
         self.assertTrue(data.startswith(b"\x89PNG"))
+
+
+# --- E2E F3: Einladung bei Telegram-Fehlern ------------------------------ #
+
+
+def link_error(status: int, **params) -> TelegramAPIError:
+    """Fehlerantwort auf createChatInviteLink mit dem gegebenen HTTP-Status."""
+    payload = {"error_code": status, "description": f"Fehler {status}"}
+    if params:
+        payload["parameters"] = params
+    return TelegramAPIError("createChatInviteLink", status, payload)
+
+
+class TelegramErrorRetryableTests(SimpleTestCase):
+    """
+    retryable trennt vorübergehende Fehler (Retry lohnt) von
+    Fehlkonfiguration (Retry scheitert genauso, also sofort sichtbar machen).
+    """
+
+    def test_retryable_by_status_code(self):
+        cases = [
+            # (Status, Parameter, erwartet)
+            (401, {}, False),  # ungültiges Token
+            (400, {}, False),  # Bot nicht Admin / falsche Chat-ID
+            (403, {}, False),  # Bot aus der Gruppe entfernt
+            (429, {"retry_after": 7}, True),  # Drosselung
+            (500, {}, True),
+            (502, {}, True),
+        ]
+        for status, params, expected in cases:
+            with self.subTest(status=status):
+                self.assertIs(link_error(status, **params).retryable, expected)
+
+    def test_retryable_when_retry_after_set_without_429(self):
+        # is_rate_limited zählt auch retry_after allein als Drosselung.
+        self.assertIs(link_error(400, retry_after=3).retryable, True)
+
+    def test_retryable_transport_error_is_always_true(self):
+        self.assertIs(TelegramTransportError("Timeout").retryable, True)
+
+
+INVITE_COMPLETE_PROFILE = {
+    "city": "Berlin",
+    "headline": "Designerin",
+    "bio": "Kurz über mich",
+    "can_help_with": "Design-Reviews",
+    "looking_for": "Sparring zu UX",
+}
+
+
+class InviteLinkFailureTests(TestCase):
+    """
+    Der Task bei Fehlern von createChatInviteLink: Retry nur bei
+    vorübergehenden Fehlern, sonst Abbruch mit logger.error. In beiden Fällen
+    bleibt die Einladung offen (kein Link, kein invite_sent_at).
+    """
+
+    def setUp(self):
+        self.create_link = mock.patch(
+            "apps.bot.tasks.email.create_single_use_invite_link"
+        ).start()
+        self.send_email = mock.patch("apps.bot.tasks.email.send_email").start()
+        # retry() ersetzt: Celery würde beim Direktaufruf die Exception
+        # werfen, geprüft werden soll aber, OB und WIE retry gerufen wird.
+        self.retry = mock.patch.object(
+            send_telegram_invite_email, "retry", side_effect=Retry()
+        ).start()
+        self.addCleanup(mock.patch.stopall)
+
+        self.user = CustomUser.objects.create_user(
+            email="anna@example.com",
+            password="Str0ng!Passwort",
+            first_name="Anna",
+            last_name="B",
+            is_active=True,
+        )
+        MemberProfile.objects.create(
+            user=self.user,
+            slug="anna-b",
+            avatar="avatars/user-1.jpg",
+            is_directory_visible=True,
+            **INVITE_COMPLETE_PROFILE,
+        )
+        TelegramInvite.objects.create(user=self.user)
+
+    def assert_invite_still_open(self) -> None:
+        invite = TelegramInvite.objects.get(user=self.user)
+        self.assertIsNone(invite.invite_link)
+        self.assertIsNone(invite.invite_sent_at)
+        self.send_email.assert_not_called()
+
+    def test_invite_task_permanent_error_gives_up_without_retry(self):
+        for status in (401, 403):
+            with self.subTest(status=status):
+                self.retry.reset_mock()
+                error = link_error(status)
+                self.create_link.side_effect = error
+
+                with self.assertLogs("apps.bot.tasks.email", "ERROR") as logs:
+                    with self.assertRaises(TelegramAPIError) as ctx:
+                        send_telegram_invite_email(self.user.pk)
+
+                self.assertIs(ctx.exception, error)
+                self.retry.assert_not_called()
+                self.assertIn("dauerhafter Telegram-Fehler", logs.output[0])
+                self.assert_invite_still_open()
+
+    def test_invite_task_rate_limit_retries_after_telegram_wait_time(self):
+        error = link_error(429, retry_after=7)
+        self.create_link.side_effect = error
+
+        with self.assertRaises(Retry):
+            send_telegram_invite_email(self.user.pk)
+
+        self.retry.assert_called_once_with(exc=error, countdown=7)
+        self.assert_invite_still_open()
+
+    def test_invite_task_server_error_retries_with_default_delay(self):
+        error = link_error(502)
+        self.create_link.side_effect = error
+
+        with self.assertRaises(Retry):
+            send_telegram_invite_email(self.user.pk)
+
+        # countdown=None → Celery nimmt default_retry_delay.
+        self.retry.assert_called_once_with(exc=error, countdown=None)
+        self.assert_invite_still_open()
+
+    def test_invite_task_transport_error_retries_with_default_delay(self):
+        error = TelegramTransportError("Timeout")
+        self.create_link.side_effect = error
+
+        with self.assertRaises(Retry):
+            send_telegram_invite_email(self.user.pk)
+
+        self.retry.assert_called_once_with(exc=error, countdown=None)
+        self.assert_invite_still_open()
+
+
+class InviteStateServiceTests(TestCase):
+    def setUp(self):
+        self.user = CustomUser.objects.create_user(
+            email="anna@example.com",
+            password="Str0ng!Passwort",
+            first_name="Anna",
+            last_name="B",
+            is_active=True,
+        )
+
+    def make_invite(self, **fields) -> TelegramInvite:
+        return TelegramInvite.objects.create(user=self.user, **fields)
+
+    # --- is_invite_pending -------------------------------------------------
+
+    def test_is_invite_pending_without_invite_row(self):
+        self.assertTrue(is_invite_pending(self.user.pk))
+
+    def test_is_invite_pending_with_empty_row(self):
+        self.make_invite()
+        self.assertTrue(is_invite_pending(self.user.pk))
+
+    def test_is_invite_pending_with_link_but_unsent_mail(self):
+        # Mailversand gescheitert: Link steht, Einladung ist trotzdem offen.
+        self.make_invite(invite_link="https://t.me/+abc123")
+        self.assertTrue(is_invite_pending(self.user.pk))
+
+    def test_is_invite_pending_false_after_sent_mail(self):
+        self.make_invite(invite_sent_at=timezone.now())
+        self.assertFalse(is_invite_pending(self.user.pk))
+
+    def test_is_invite_pending_false_after_joining(self):
+        # Beitritt ohne erfasste Mail (z. B. sync_telegram_profile --mark-joined).
+        self.make_invite(used=True)
+        self.assertFalse(is_invite_pending(self.user.pk))
+
+    # --- release_invite_for_resend ----------------------------------------
+
+    def test_release_invite_for_resend_clears_sent_at_and_keeps_link(self):
+        self.make_invite(
+            invite_link="https://t.me/+abc123", invite_sent_at=timezone.now()
+        )
+
+        self.assertTrue(release_invite_for_resend(self.user.pk))
+
+        invite = TelegramInvite.objects.get(user=self.user)
+        self.assertIsNone(invite.invite_sent_at)
+        self.assertEqual(invite.invite_link, "https://t.me/+abc123")
+        self.assertTrue(is_invite_pending(self.user.pk))
+
+    def test_release_invite_for_resend_refuses_joined_member(self):
+        sent_at = timezone.now()
+        self.make_invite(
+            invite_link="https://t.me/+abc123", invite_sent_at=sent_at, used=True
+        )
+
+        self.assertFalse(release_invite_for_resend(self.user.pk))
+
+        invite = TelegramInvite.objects.get(user=self.user)
+        self.assertEqual(invite.invite_sent_at, sent_at)
+        self.assertEqual(invite.invite_link, "https://t.me/+abc123")
+
+    def test_release_invite_for_resend_without_invite_row(self):
+        # Nichts zurückzusetzen, aber auch nichts im Weg: Der Task legt die
+        # Zeile selbst an.
+        self.assertTrue(release_invite_for_resend(self.user.pk))
+        self.assertFalse(TelegramInvite.objects.filter(user=self.user).exists())
+
+    # --- is_group_member (E2E F4) -----------------------------------------
+
+    def test_is_group_member_without_invite_row(self):
+        self.assertFalse(is_group_member(self.user.pk))
+
+    def test_is_group_member_with_unused_invite(self):
+        self.make_invite(invite_sent_at=timezone.now())
+        self.assertFalse(is_group_member(self.user.pk))
+
+    def test_is_group_member_with_used_invite(self):
+        self.make_invite(used=True)
+        self.assertTrue(is_group_member(self.user.pk))
+
+    # --- has_invite_been_sent ----------------------------------------------
+
+    def test_has_invite_been_sent_without_invite_row(self):
+        self.assertFalse(has_invite_been_sent(self.user.pk))
+
+    def test_has_invite_been_sent_with_unsent_row(self):
+        # Link schon erzeugt, Mail aber nicht raus: gilt nicht als versandt.
+        self.make_invite(invite_link="https://t.me/+abc123", invite_sent_at=None)
+        self.assertFalse(has_invite_been_sent(self.user.pk))
+
+    def test_has_invite_been_sent_with_timestamp(self):
+        self.make_invite(invite_sent_at=timezone.now())
+        self.assertTrue(has_invite_been_sent(self.user.pk))
+
+
+@override_settings(
+    CACHES={
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "invite-dispatch-tests",
+        }
+    },
+)
+class ClaimInviteDispatchTests(SimpleTestCase):
+    """Die Dispatch-Sperre arbeitet nur auf dem Cache, ohne DB."""
+
+    USER_ID = 42
+
+    def setUp(self):
+        # Wie in den übrigen Cache-Tests: nie den echten Redis leeren.
+        cache.clear()
+
+    def test_claim_invite_dispatch_first_call_wins(self):
+        self.assertTrue(claim_invite_dispatch(self.USER_ID))
+
+    def test_claim_invite_dispatch_second_call_is_blocked(self):
+        claim_invite_dispatch(self.USER_ID)
+        self.assertFalse(claim_invite_dispatch(self.USER_ID))
+
+    def test_claim_invite_dispatch_is_per_user(self):
+        claim_invite_dispatch(self.USER_ID)
+        self.assertTrue(claim_invite_dispatch(self.USER_ID + 1))
+
+    def test_claim_invite_dispatch_force_ignores_existing_lock(self):
+        claim_invite_dispatch(self.USER_ID)
+        self.assertTrue(claim_invite_dispatch(self.USER_ID, force=True))
+        self.assertTrue(claim_invite_dispatch(self.USER_ID, force=True))
+
+    def test_claim_invite_dispatch_force_sets_lock(self):
+        # Ohne vorherige Sperre: force legt sie an, ein normaler Aufruf
+        # danach (z. B. Speichern durch den Nutzer) geht leer aus.
+        self.assertTrue(claim_invite_dispatch(self.USER_ID, force=True))
+        self.assertFalse(claim_invite_dispatch(self.USER_ID))
+
+    def test_claim_invite_dispatch_debounce_covers_retry_window(self):
+        # Solange der Task samt Retries noch laufen kann, darf kein zweiter
+        # Task angestoßen werden. Heute: 4 × (30 s + 15 s) + 3 × 30 s = 270 s.
+        # Wer Retries oder Timeouts hochsetzt, muss die Sperre mitziehen.
+        task = send_telegram_invite_email
+        attempts = task.max_retries + 1
+        worst_case = (
+            attempts * (telegram_service.API_TIMEOUT_SECONDS + settings.RESEND_TIMEOUT)
+            + task.max_retries * task.default_retry_delay
+        )
+        self.assertGreater(INVITE_DISPATCH_DEBOUNCE_SECONDS, worst_case)
+
+
+# --- E2E F6: Profil-Link ohne Slug --------------------------------------- #
+
+
+@override_settings(FRONTEND_URL="https://club.example")
+class BuildProfileUrlTests(SimpleTestCase):
+    def test_build_profile_url_with_slug(self):
+        self.assertEqual(
+            build_profile_url(make_profile(slug="anna-b")),
+            "https://club.example/members/anna-b",
+        )
+
+    def test_build_profile_url_without_slug_points_to_directory(self):
+        # make_profile: user_id=42. Weder ein erfundener member-<id>-Slug noch
+        # die ID selbst dürfen im Link landen.
+        url = build_profile_url(make_profile(slug=""))
+
+        self.assertEqual(url, "https://club.example/members")
+        self.assertNotIn("member-", url)
+        self.assertNotIn("42", url)

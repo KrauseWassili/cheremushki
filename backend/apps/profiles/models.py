@@ -19,6 +19,10 @@ from .hashtags import (
     parse_hashtag,
 )
 
+# RESERVED_SLUGS lebt in slugs.py (die Datenmigration braucht es ohne
+# Modellimport) und wird hier für bestehende Importe weitergereicht.
+from .slugs import RESERVED_SLUGS, slug_base, unique_slug  # noqa: F401
+
 _AVATAR_EXTENSIONS = frozenset({"jpg", "jpeg", "png", "webp"})
 _DEFAULT_AVATAR_EXTENSION = "jpg"
 
@@ -49,14 +53,6 @@ DIRECTORY_REQUIRED_FIELDS: tuple[str, ...] = (
     "can_help_with",
     "looking_for",
 )
-
-
-# Slugs, die im Verzeichnis-Router bereits eine Route belegen. Der Router
-# registriert MemberProfileViewSet als Catch-all unter api/v1/profiles/ – ein
-# Mitglied mit dem Slug "tags" wäre unter /profiles/tags/ nicht erreichbar,
-# weil dort die @action liegt. Deshalb werden diese Slugs gar nicht erst
-# vergeben.
-RESERVED_SLUGS: frozenset[str] = frozenset({"user", "tags", "cities"})
 
 
 class ProfileTag(TagBase):
@@ -331,22 +327,18 @@ class MemberProfile(models.Model):
         self.save()
 
     def ensure_unique_slug(self, base: str | None = None) -> None:
+        # Läuft nur für Profile ohne Slug: Eine Namensänderung benennt den
+        # Slug bewusst nicht um, sonst brächen geteilte Links und der Link im
+        # Telegram-Post.
         if self.slug:
             return
         source = base or f"{self.user.first_name}-{self.user.last_name}"
-        base_slug = slugify(source) or f"member-{self.user.pk}"
-        candidate = base_slug
-        counter = 2
-        # Reservierte Slugs verhalten sich wie belegte: Ein Mitglied namens
-        # "Tags" weicht auf "tags-2" aus, statt unter einer Route zu landen,
-        # die der Router an eine @action vergibt.
-        while (
-            candidate in RESERVED_SLUGS
-            or MemberProfile.objects.filter(slug=candidate).exclude(pk=self.pk).exists()
-        ):
-            candidate = f"{base_slug}-{counter}"
-            counter += 1
-        self.slug = candidate
+        self.slug = unique_slug(
+            slug_base(source),
+            lambda candidate: MemberProfile.objects.filter(slug=candidate)
+            .exclude(pk=self.pk)
+            .exists(),
+        )
 
 
 class ContactRequestStatus(models.TextChoices):

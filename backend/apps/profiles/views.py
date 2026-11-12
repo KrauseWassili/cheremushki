@@ -19,7 +19,7 @@ from .avatar_files import delete_avatar_files, schedule_avatar_file_deletion
 from .file_streaming import streaming_file_response
 from .filters import MemberProfileFilter
 from .models import ContactRequest, ContactRequestStatus, MemberProfile
-from .permissions import IsActiveAuthenticated
+from .permissions import IsActiveAuthenticated, IsGroupMember
 from .serializers import (
     AvatarUploadSerializer,
     CitySuggestionSerializer,
@@ -254,7 +254,12 @@ class MemberProfileViewSet(
     """
 
     serializer_class = MemberProfileSerializer
-    permission_classes = [IsActiveAuthenticated]
+    # Liste, Detail, Städte und Kontaktanfrage nur für Gruppenmitglieder
+    # (E2E F4). Die Kontaktanfrage gehört dazu: Ihr Ziel findet man nur über
+    # das Verzeichnis, und sie löst eine Mail an ein Mitglied aus – ohne
+    # Gate könnte jeder frisch Registrierte Mitglieder anschreiben, deren
+    # Slug er kennt.
+    permission_classes = [IsActiveAuthenticated, IsGroupMember]
     lookup_field = "slug"
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_class = MemberProfileFilter
@@ -308,10 +313,19 @@ class MemberProfileViewSet(
         parameters=[SUGGESTION_QUERY_PARAM, SUGGESTION_LIMIT_PARAM],
         responses=TagSuggestionSerializer(many=True),
     )
-    @action(detail=False, methods=["get"], url_path="tags")
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="tags",
+        permission_classes=[IsActiveAuthenticated],
+    )
     async def tag_suggestions(self, request):
         """
         Autocomplete für das kuratierte Tag-Vokabular.
+
+        Ohne Gruppen-Gate: Der Tag-Picker im eigenen Profilformular braucht
+        die Liste, bevor jemand beitreten kann. Sie enthält nur das
+        Vokabular und Nutzungszahlen, keine Mitgliederdaten.
         """
         limit = resolve_limit(request.query_params.get("limit"))
         query = request.query_params.get("q", "")

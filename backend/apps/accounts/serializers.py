@@ -4,7 +4,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework.exceptions import ValidationError
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from apps.bot.models import TelegramInvite
+from apps.bot.services.invites import has_invite_been_sent, is_group_member
 from .models import CustomUser
 
 
@@ -111,24 +111,13 @@ class UserSerializer(serializers.ModelSerializer):
         return obj.full_name
 
     async def get_telegram_joined(self, obj) -> bool:
-        def _check() -> bool:
-            from apps.bot.models import TelegramInvite
-
-            return TelegramInvite.objects.filter(user_id=obj.pk, used=True).exists()
-
-        return await sync_to_async(_check)()
+        return await sync_to_async(is_group_member)(obj.pk)
 
     async def get_has_telegram_invite(self, obj) -> bool:
         """
         Ist die Einladung versandt?
         """
-
-        def _check() -> bool:
-            return TelegramInvite.objects.filter(
-                user_id=obj.pk, invite_sent_at__isnull=False
-            ).exists()
-
-        return await sync_to_async(_check)()
+        return await sync_to_async(has_invite_been_sent)(obj.pk)
 
 
 class PasswordChangeSerializer(serializers.Serializer):

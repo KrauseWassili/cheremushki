@@ -6,6 +6,11 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers as drf_serializers
 from rest_framework.exceptions import ValidationError
 
+from apps.bot.services.invites import (
+    claim_invite_dispatch,
+    has_invite_been_sent,
+    is_invite_pending,
+)
 from apps.bot.tasks.email import send_telegram_invite_email
 from apps.bot.tasks.profile_post import sync_telegram_profile_post
 
@@ -20,12 +25,13 @@ from .avatar_files import (
 from .hashtags import InvalidHashtag, parse_hashtag
 from .models import (
     DIRECTORY_REQUIRED_FIELDS,
-    RESERVED_SLUGS,
     ContactMode,
     ContactRequest,
     MemberProfile,
     ProfileTag,
 )
+from .permissions import can_view_directory
+from .slugs import RESERVED_SLUGS
 from .telegram import InvalidTelegramUsername, parse_telegram_username
 
 # Obergrenze pro Profil. Der Wert ist keine technische Schranke, sondern eine
@@ -305,6 +311,9 @@ class MyProfileSerializer(MemberProfileSerializer):
     missing_fields = serializers.SerializerMethodField(read_only=True)
     required_fields = serializers.SerializerMethodField(read_only=True)
     invite_sent = serializers.SerializerMethodField(read_only=True)
+    # Dieselbe Regel wie IsGroupMember – das Frontend leitet daraus Routing
+    # und Hinweistexte ab, statt die Mitgliedschaft selbst zu bestimmen.
+    can_view_directory = serializers.SerializerMethodField(read_only=True)
     # Nur ein Flag, keine URL: Das Original ist nicht öffentlich ausgeliefert,
     # das Frontend holt es mit Bearer-Token über /user/me/avatar/original/.
     has_avatar_original = serializers.SerializerMethodField(read_only=True)
@@ -315,6 +324,7 @@ class MyProfileSerializer(MemberProfileSerializer):
             "missing_fields",
             "required_fields",
             "invite_sent",
+            "can_view_directory",
             "has_avatar_original",
         ]
         read_only_fields = MemberProfileSerializer.Meta.read_only_fields + [
@@ -322,6 +332,7 @@ class MyProfileSerializer(MemberProfileSerializer):
             "missing_fields",
             "required_fields",
             "invite_sent",
+            "can_view_directory",
             "has_avatar_original",
         ]
 
@@ -335,15 +346,10 @@ class MyProfileSerializer(MemberProfileSerializer):
         return await sync_to_async(obj.missing_directory_fields)()
 
     async def get_invite_sent(self, obj: MemberProfile) -> bool:
+        return await sync_to_async(has_invite_been_sent)(obj.user_id)
 
-        def _check() -> bool:
-            from apps.bot.models import TelegramInvite
-
-            return TelegramInvite.objects.filter(
-                user_id=obj.user_id, invite_sent_at__isnull=False
-            ).exists()
-
-        return await sync_to_async(_check)()
+    async def get_can_view_directory(self, obj: MemberProfile) -> bool:
+        return await sync_to_async(can_view_directory)(obj.user)
 
     async def get_required_fields(self, obj: MemberProfile) -> list[str]:
         return list(DIRECTORY_REQUIRED_FIELDS)
@@ -354,15 +360,40 @@ async def trigger_profile_side_effects(
 ) -> None:
     """
     Löst aus, was nach einer Profiländerung folgt.
+
+    Die Einladung geht an der Flanke unvollständig→vollständig raus – und
+    zusätzlich bei jedem Speichern eines vollständigen Profils, solange noch
+    keine Einladung versandt und die Gruppe nicht beigetreten ist. Das ist der
+    Nachholweg nach einem gescheiterten Versand (erschöpfte Retries,
+    dauerhafter Telegram-Fehler). Doppelversand derselben Mail bremst die
+    Dispatch-Sperre (``claim_invite_dispatch``), einen zweiten Link
+    verhindert erst der Claim im Task.
     """
 
-    if became_ready:
+    if await sync_to_async(_should_dispatch_invite)(profile, became_ready):
         await sync_to_async(send_telegram_invite_email.delay)(profile.user_id)
 
     # Der Profilpost ist ein No-Op, solange kein genutzter Invite existiert
     # der Task prüft das selbst. Er wird trotzdem immer angestoßen, damit
     # Änderungen an einem schon geposteten Profil im Kanal ankommen.
     await sync_to_async(sync_telegram_profile_post.delay)(profile.user_id)
+
+
+def _should_dispatch_invite(profile: MemberProfile, became_ready: bool) -> bool:
+    # Staff ist vom Gate ohnehin ausgenommen (can_view_directory) und als
+    # Betreiber bzw. Gruppen-Admin meist ohne Link beigetreten, also ohne
+    # used=True. Der Nachholweg würde ihnen sonst beim nächsten Speichern
+    # einen frischen, gültigen Einladungslink schicken.
+    if profile.user.is_staff:
+        return False
+    if not (
+        became_ready
+        or (profile.is_directory_visible and is_invite_pending(profile.user_id))
+    ):
+        return False
+    # Sperre zuletzt: Ein Speichern, das gar nichts anstoßen würde, soll
+    # sie nicht belegen.
+    return claim_invite_dispatch(profile.user_id)
 
 
 class TagSuggestionSerializer(drf_serializers.Serializer):

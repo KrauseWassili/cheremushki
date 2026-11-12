@@ -1,7 +1,16 @@
+from functools import partial
+
 from django import forms
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.db import transaction
 from django.db.models import Count
 from unfold.admin import ModelAdmin
+
+from apps.bot.services.invites import (
+    claim_invite_dispatch,
+    release_invite_for_resend,
+)
+from apps.bot.tasks.email import send_telegram_invite_email
 
 from .models import ContactRequest, MemberProfile, ProfileTag
 
@@ -77,12 +86,53 @@ class MemberProfileAdmin(ModelAdmin):
         "tags__label",
     )
 
+    actions = ("resend_telegram_invite",)
+
     def get_queryset(self, request):
         return super().get_queryset(request).prefetch_related("tags")
 
     @admin.display(description="Tags")
     def tag_list(self, obj: MemberProfile) -> str:
         return ", ".join(tag.name for tag in obj.tags.all()) or "—"
+
+    @admin.action(description="Telegram-Einladung erneut senden")
+    def resend_telegram_invite(self, request, queryset) -> None:
+        """
+        Stößt die Einladung für die gewählten Profile erneut an.
+
+        Für den Fall, dass die Mail zwar als versandt gilt, aber nie ankam
+        (Spam, Tippfehler) – ein gescheiterter Versand holt sich beim nächsten
+        Speichern des Profils von selbst nach. Was zurückgesetzt wird und
+        warum der Link bleibt, steht bei ``release_invite_for_resend``. Die
+        Vollständigkeit prüft der Task ohnehin selbst; hier wird sie nur
+        vorab gefiltert, damit die Rückmeldung stimmt.
+        """
+        queued = incomplete = joined = 0
+        for profile in queryset.select_related("user"):
+            if not profile.compute_directory_ready():
+                incomplete += 1
+                continue
+            if not release_invite_for_resend(profile.user_id):
+                joined += 1
+                continue
+            # Ausdrücklich angeforderter Neuversand: Eine Dispatch-Sperre
+            # aus einem früheren Anlauf gilt hier nicht. force setzt sie
+            # neu, damit ein Speichern des Nutzers direkt danach nicht
+            # einen zweiten Task mit derselben Mail anstößt.
+            claim_invite_dispatch(profile.user_id, force=True)
+            # Erst nach dem Commit: Der Worker soll das zurückgesetzte
+            # invite_sent_at sehen, nicht den alten Stand.
+            transaction.on_commit(
+                partial(send_telegram_invite_email.delay, profile.user_id)
+            )
+            queued += 1
+
+        self.message_user(
+            request,
+            f"Einladung angestoßen: {queued}. Übersprungen – Profil "
+            f"unvollständig: {incomplete}, Gruppe bereits beigetreten: {joined}.",
+            messages.SUCCESS if queued else messages.WARNING,
+        )
 
 
 @admin.register(ContactRequest)
